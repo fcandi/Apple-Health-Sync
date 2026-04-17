@@ -65,6 +65,11 @@ export default class AppleHealthSyncPlugin extends Plugin {
 			}
 
 			const healthData = parseShortcutPayload(payload, v ?? "1", date);
+			const metricCount = Object.keys(healthData.metrics).length;
+			const totalMetricKeys = payload.metrics ? Object.keys(payload.metrics).length : 0;
+			console.debug("Apple Health Sync: parsed", metricCount, "of", totalMetricKeys,
+				"metrics for", date, "— keys:", Object.keys(healthData.metrics).join(","));
+
 			const success = await this.syncManager.writeData(
 				date, healthData, this.settings
 			);
@@ -78,7 +83,10 @@ export default class AppleHealthSyncPlugin extends Plugin {
 						.replace("{date}", date)
 				);
 			} else {
-				new Notice(t("noticeSyncNoData", this.settings.language));
+				new Notice(
+					`${t("noticeSyncNoData", this.settings.language)} (${metricCount}/${totalMetricKeys} · ${date})`,
+					10000
+				);
 			}
 		} catch (error) {
 			console.error("Apple Health Sync: URI handler error", error);

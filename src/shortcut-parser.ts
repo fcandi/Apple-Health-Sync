@@ -27,11 +27,13 @@ const AVG_METRICS = new Set([
 ]);
 
 function parseNumList(raw: unknown): number[] {
+	// parseFloat statt Number — iOS fügt Werte oft mit Einheit ein ("12985 count"),
+	// parseFloat ignoriert den Textteil nach der Zahl.
 	return String(raw)
 		.split(/[\n,]+/)
 		.map((s) => s.trim())
 		.filter(Boolean)
-		.map((s) => Number(s))
+		.map((s) => parseFloat(s))
 		.filter((n) => Number.isFinite(n));
 }
 
