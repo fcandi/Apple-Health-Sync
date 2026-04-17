@@ -30,7 +30,7 @@ export const METRICS: MetricDefinition[] = [
 	// Extended — Apple Health exclusive
 	{ key: "vo2max",          type: "number", category: "extended", defaultEnabled: false },
 	{ key: "walking_hr_avg",  type: "number", category: "extended", defaultEnabled: false },
-	{ key: "stand_hours",     type: "number", category: "extended", defaultEnabled: false },
+	{ key: "stand_min",       type: "number", category: "extended", defaultEnabled: false },
 	{ key: "wrist_temp",      type: "number", category: "extended", defaultEnabled: false },
 	{ key: "mindful_min",     type: "number", category: "extended", defaultEnabled: false },
 ];

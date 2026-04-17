@@ -62,7 +62,7 @@ export const en = {
 	// Metric Labels — Apple Health exclusive
 	metric_vo2max: "VO2 max",
 	metric_walking_hr_avg: "Walking heart rate avg",
-	metric_stand_hours: "Stand hours",
+	metric_stand_min: "Stand minutes",
 	metric_wrist_temp: "Wrist temperature",
 	metric_mindful_min: "Mindful minutes",
 

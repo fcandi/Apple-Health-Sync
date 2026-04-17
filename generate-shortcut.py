@@ -153,7 +153,7 @@ METRICS = [
     ('intensity_min',    'Exercise Time'),
     # Extended — Garmin-kompatibel
     ('calories_resting', 'Resting Calories'),
-    ('spo2',             'Blood Oxygen'),
+    ('spo2',             'Oxygen Saturation'),
     ('respiration_rate', 'Respiratory Rate'),
     ('distance_m',       'Walking + Running Distance'),  # Plugin teilt → distance_km
     ('floors',           'Flights Climbed'),
@@ -162,9 +162,9 @@ METRICS = [
     # Extended — Apple-exklusiv
     ('vo2max',           'VO2 Max'),
     ('walking_hr_avg',   'Walking Heart Rate Average'),
-    ('stand_hours',      'Stand Hours'),
-    ('wrist_temp',       'Wrist Temperature'),
-    ('mindful_min',      'Mindful Minutes'),
+    ('stand_min',        'Stand Time'),  # Minuten, vom User in iOS verifiziert
+    ('wrist_temp',       'Sleep Wrist Temperature'),  # nur Schlaftemperatur-Delta
+    ('mindful_min',      'Mindful Session'),
 ]
 
 # --- UUIDs für Date-Setup ---

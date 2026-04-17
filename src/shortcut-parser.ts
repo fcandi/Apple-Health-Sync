@@ -33,7 +33,7 @@ const AVG_METRICS = new Set([
 const INT_METRICS = new Set([
 	"steps", "resting_hr", "hrv",
 	"calories_active", "calories_total", "calories_resting",
-	"intensity_min", "floors", "stand_hours", "mindful_min",
+	"intensity_min", "floors", "stand_min", "mindful_min",
 	"spo2", "respiration_rate", "walking_hr_avg",
 ]);
 

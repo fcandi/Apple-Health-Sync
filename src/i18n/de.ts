@@ -64,7 +64,7 @@ export const de: Record<TranslationKeys, string> = {
 	// Metric Labels — Apple Health exklusiv
 	metric_vo2max: "VO2 Max",
 	metric_walking_hr_avg: "Geh-Herzfrequenz Ø",
-	metric_stand_hours: "Steh-Stunden",
+	metric_stand_min: "Steh-Minuten",
 	metric_wrist_temp: "Handgelenk-Temperatur",
 	metric_mindful_min: "Achtsamkeits-Minuten",
 
