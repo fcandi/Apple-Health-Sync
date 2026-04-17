@@ -30,18 +30,57 @@ function parseNumList(raw: unknown): number[] {
 	// parseFloat statt Number — iOS fügt Werte oft mit Einheit ein ("12985 count"),
 	// parseFloat ignoriert den Textteil nach der Zahl.
 	return String(raw)
-		.split(/[\n,]+/)
+		.split(/\n+/)
 		.map((s) => s.trim())
 		.filter(Boolean)
 		.map((s) => parseFloat(s))
 		.filter((n) => Number.isFinite(n));
 }
 
+/**
+ * Normalisiert iOS-Datums-Strings zu "yyyy-MM-dd".
+ * iOS ignoriert teils custom Aggrandizement-Formate und fällt auf Device-Locale zurück.
+ * Unterstützt:
+ *   - ISO:   "2026-04-16" oder "2026-04-16T00:00:00"
+ *   - DE:    "16.04.2026, 00:00" oder "16.04.2026"
+ *   - EN:    "Apr 16, 2026" oder "4/16/26" (zukunftssicher)
+ */
+function normalizeDate(s: string): string {
+	const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+	if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+	const de = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+	if (de) {
+		return `${de[3]}-${de[2]!.padStart(2, "0")}-${de[1]!.padStart(2, "0")}`;
+	}
+
+	// EN-Slash "4/16/26" oder "4/16/2026"
+	const enSlash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+	if (enSlash) {
+		const yr = enSlash[3]!.length === 2 ? `20${enSlash[3]}` : enSlash[3]!;
+		return `${yr}-${enSlash[1]!.padStart(2, "0")}-${enSlash[2]!.padStart(2, "0")}`;
+	}
+
+	// EN-Monatsname "Apr 16, 2026"
+	const enName = s.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/);
+	if (enName) {
+		const months: Record<string, string> = {
+			jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+			jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+		};
+		const m = months[enName[1]!.slice(0, 3).toLowerCase()];
+		if (m) return `${enName[3]}-${m}-${enName[2]!.padStart(2, "0")}`;
+	}
+
+	return s;
+}
+
 function parseStrList(raw: unknown): string[] {
 	return String(raw)
-		.split(/[\n,]+/)
+		.split(/\n+/)
 		.map((s) => s.trim())
-		.filter(Boolean);
+		.filter(Boolean)
+		.map(normalizeDate);
 }
 
 /**

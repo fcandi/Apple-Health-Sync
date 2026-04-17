@@ -48,19 +48,38 @@ def param_ref_as_text(action_uuid, output_name):
     }
 
 
+def date_aggrandizement(fmt):
+    """iOS-Inline-Datumsformat ohne separate format.date-Aktion."""
+    return {
+        'Type': 'WFFormattedDateAggrandizement',
+        'WFFormattedDateFormatStyle': 'Custom',
+        'WFFormattedDateFormat': {
+            'Value': {'string': fmt},
+            'WFSerializationType': 'WFTextTokenString',
+        },
+    }
+
+
 def text_with_vars(text_parts):
-    """Build WFTextTokenString. Variable refs are (uuid, output_name) tuples."""
+    """Build WFTextTokenString. Parts sind entweder str oder
+       (uuid, output_name) bzw. (uuid, output_name, date_fmt) für Inline-Datumsformat."""
     result_text = ''
     attachments = {}
     for part in text_parts:
         if isinstance(part, str):
             result_text += part
         elif isinstance(part, tuple):
-            action_uuid, output_name = part
             pos = len(result_text)
             result_text += '\ufffc'
             range_key = '{' + str(pos) + ', 1}'
-            attachments[range_key] = action_output_ref(action_uuid, output_name)
+            if len(part) == 3:
+                action_uuid, output_name, fmt = part
+                ref = action_output_ref(action_uuid, output_name)
+                ref['Aggrandizements'] = [date_aggrandizement(fmt)]
+                attachments[range_key] = ref
+            else:
+                action_uuid, output_name = part
+                attachments[range_key] = action_output_ref(action_uuid, output_name)
     value = {'string': result_text}
     if attachments:
         value['attachmentsByRange'] = attachments
@@ -70,11 +89,11 @@ def text_with_vars(text_parts):
     }
 
 
-# DE-OutputNames (Gerätesprache Deutsch) — müssen zur iOS-Locale passen,
-# sonst findet die Laufzeit die Variable nicht.
-OUT_CURRENT_DATE = 'Aktuelles Datum'
-OUT_ADJUSTED_DATE = 'Angepasstes Datum'
-OUT_FORMATTED_DATE = 'Formatiertes Datum'
+# OutputNames — Apple lokalisiert nur einen Teil der Aktionen. Empirisch:
+#   .adjustdate, .format.date, .gettext, .urlencode → fest englisch
+#   .filter.health.quantity, .properties.health.quantity → lokalisiert (DE)
+# Bei Mismatch bleibt die Variable im Text leer, daher pro Aktion richtig treffen.
+OUT_ADJUSTED_DATE = 'Adjusted Date'
 OUT_HEALTH = 'Health-Messungen'
 OUT_START_DATE = 'Startdatum'
 OUT_TEXT = 'Text'
@@ -123,20 +142,7 @@ def extract_start_date(action_uuid, health_uuid):
     }
 
 
-def format_date(action_uuid, input_uuid, input_output_name, fmt='yyyy-MM-dd'):
-    """Format-Date — funktioniert transparent auf Liste (iOS mapt pro Element)."""
-    return {
-        'WFWorkflowActionIdentifier': 'is.workflow.actions.format.date',
-        'WFWorkflowActionParameters': {
-            'UUID': action_uuid,
-            'WFDateFormatStyle': 'Custom',
-            'WFDateFormat': fmt,
-            'WFDate': param_ref(input_uuid, input_output_name),
-        },
-    }
-
-
-# --- Plan: pro Metrik 3 Aktionen (Find, Extract Start Date, Format Date yyyy-MM-dd) ---
+# --- Plan: pro Metrik 2 Aktionen (Find, Extract Start Date) — Formatierung inline ---
 METRICS = [
     # (json_key, iOS-Typname)
     ('steps',           'Steps'),
@@ -147,39 +153,21 @@ METRICS = [
 ]
 
 # --- UUIDs für Date-Setup ---
-uuid_now       = make_uuid()
-uuid_today     = make_uuid()
 uuid_yesterday = make_uuid()
-uuid_fmt_yest  = make_uuid()
 uuid_json      = make_uuid()
 uuid_encode    = make_uuid()
 uuid_url       = make_uuid()
 
-# Pro Metrik drei UUIDs
+# Pro Metrik zwei UUIDs
 metric_uuids = {
-    key: (make_uuid(), make_uuid(), make_uuid())  # find, extract, format
+    key: (make_uuid(), make_uuid())  # find, extract
     for key, _ in METRICS
 }
 
 actions = []
 
-# === 1. Aktuelles Datum ===
-actions.append({
-    'WFWorkflowActionIdentifier': 'is.workflow.actions.date',
-    'WFWorkflowActionParameters': {'UUID': uuid_now},
-})
-
-# === 2. Anfang des Tages (heute 00:00) ===
-actions.append({
-    'WFWorkflowActionIdentifier': 'is.workflow.actions.adjustdate',
-    'WFWorkflowActionParameters': {
-        'UUID': uuid_today,
-        'WFAdjustOperation': 'Get Start of Day',
-        'WFDate': param_ref(uuid_now, OUT_CURRENT_DATE),
-    },
-})
-
-# === 3. − 1 Tag → gestern 00:00 ===
+# === 1. Gestern-Datum (Subtract 1 Day ohne Input nimmt aktuelle Zeit) ===
+# Formatierung passiert inline im Text via Aggrandizement — keine format.date-Aktion.
 actions.append({
     'WFWorkflowActionIdentifier': 'is.workflow.actions.adjustdate',
     'WFWorkflowActionParameters': {
@@ -189,32 +177,26 @@ actions.append({
             'Value': {'Unit': 'days', 'Magnitude': '1'},
             'WFSerializationType': 'WFQuantityFieldValue',
         },
-        'WFDate': param_ref(uuid_today, OUT_ADJUSTED_DATE),
     },
 })
 
-# === 4. Gestern formatieren → "yyyy-MM-dd" (Plugin-Autorität für "welcher Tag") ===
-actions.append(format_date(uuid_fmt_yest, uuid_yesterday, OUT_ADJUSTED_DATE))
-
-# === 5. Pro Metrik: Find Health + Extract Start Date + Format Date ===
+# === 2. Pro Metrik: Find Health + Extract Start Date ===
 for key, display_name in METRICS:
-    u_find, u_extract, u_fmt = metric_uuids[key]
+    u_find, u_extract = metric_uuids[key]
     actions.append(health_find(u_find, display_name, days=3))
     actions.append(extract_start_date(u_extract, u_find))
-    actions.append(format_date(u_fmt, u_extract, OUT_START_DATE))
 
-# === 6. JSON-Payload bauen ===
-# Jede Metrik ist ein Objekt {"v":"<values-list>","d":"<dates-list>"}.
-# iOS fügt Listen standardmäßig als Newline-separierte Texte ein — Plugin parst robust.
-json_parts = ['{"date":"', (uuid_fmt_yest, OUT_FORMATTED_DATE), '","metrics":{']
+# === 3. JSON-Payload bauen — Datums inline formatiert via Aggrandizement ===
+DATE_FMT = 'yyyy-MM-dd'
+json_parts = ['{"date":"', (uuid_yesterday, OUT_ADJUSTED_DATE, DATE_FMT), '","metrics":{']
 for i, (key, _) in enumerate(METRICS):
-    u_find, _, u_fmt = metric_uuids[key]
+    u_find, u_extract = metric_uuids[key]
     if i > 0:
         json_parts.append(',')
     json_parts.append(f'"{key}":' + '{"v":"')
     json_parts.append((u_find, OUT_HEALTH))
     json_parts.append('","d":"')
-    json_parts.append((u_fmt, OUT_FORMATTED_DATE))
+    json_parts.append((u_extract, OUT_START_DATE, DATE_FMT))
     json_parts.append('"}')
 json_parts.append('}}')
 
