@@ -31,20 +31,41 @@ export default class AppleHealthSyncPlugin extends Plugin {
 	}
 
 	private async handleHealthSyncUri(params: Record<string, string>) {
-		const { date, data, v } = params;
+		const { data, v } = params;
+		let { date } = params;
 
-		if (!date || !data) {
-			new Notice(t("noticeInvalidData", this.settings.language));
-			return;
-		}
-		if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-			new Notice(t("noticeInvalidDate", this.settings.language));
+		if (!data) {
+			new Notice(t("noticeInvalidData", this.settings.language), 8000);
+			console.error("Apple Health Sync: empty data param. All params:", Object.keys(params).join(", "));
 			return;
 		}
 
 		try {
-			// Obsidian decodes URI params automatically
-			const payload = JSON.parse(data) as { metrics?: Record<string, unknown>; workouts?: unknown[] };
+			// Fix malformed JSON from Shortcuts: empty values, newlines in numbers
+			const cleanedData = data
+				.replace(/\n/g, "")           // Remove newlines (multi-value concat)
+				.replace(/:,/g, ":null,")     // Empty value before comma
+				.replace(/:}/g, ":null}")     // Empty value before closing brace
+				.replace(/:""}/g, ":null}");  // Empty string value
+			console.debug("Apple Health Sync: cleaned data:", cleanedData.substring(0, 200));
+			const payload = JSON.parse(cleanedData) as { date?: string; metrics?: Record<string, unknown>; workouts?: unknown[] };
+
+			// Date can come from URL param or from inside JSON payload
+			if (!date && payload.date) {
+				date = payload.date;
+			}
+			// Fallback: yesterday
+			if (!date) {
+				const d = new Date();
+				d.setDate(d.getDate() - 1);
+				date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			}
+
+			if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+				new Notice(t("noticeInvalidDate", this.settings.language));
+				return;
+			}
+
 			const healthData = parseShortcutPayload(payload, v ?? "1");
 			const success = await this.syncManager.writeData(
 				date, healthData, this.settings
