@@ -26,6 +26,21 @@ const AVG_METRICS = new Set([
 	"body_fat_pct", "vo2max",
 ]);
 
+/**
+ * Metriken, die als Integer gespeichert werden (keine Nachkommastellen).
+ * Float-Artefakte aus HealthKit-Aggregation (z.B. 464.1249999999994) werden weggerundet.
+ */
+const INT_METRICS = new Set([
+	"steps", "resting_hr", "hrv",
+	"calories_active", "calories_total", "calories_resting",
+	"intensity_min", "floors", "stand_hours", "mindful_min",
+	"spo2", "respiration_rate", "walking_hr_avg",
+]);
+
+function roundForKey(key: string, n: number): number {
+	return INT_METRICS.has(key) ? Math.round(n) : n;
+}
+
 function parseNumList(raw: unknown): number[] {
 	// parseFloat statt Number — iOS fügt Werte oft mit Einheit ein ("12985 count"),
 	// parseFloat ignoriert den Textteil nach der Zahl.
@@ -98,7 +113,7 @@ function resolveVD(pair: VDPair, key: string, targetDate: string): number | null
 			`Apple Health Sync: values/dates length mismatch for ${key}:`,
 			values.length, "vs", dates.length
 		);
-		return values.length === 1 ? values[0]! : null;
+		return values.length === 1 ? roundForKey(key, values[0]!) : null;
 	}
 
 	const matches: number[] = [];
@@ -107,10 +122,11 @@ function resolveVD(pair: VDPair, key: string, targetDate: string): number | null
 	}
 
 	if (matches.length === 0) return null;
-	if (matches.length === 1) return matches[0]!;
+	if (matches.length === 1) return roundForKey(key, matches[0]!);
 
 	const sum = matches.reduce((a, b) => a + b, 0);
-	return AVG_METRICS.has(key) ? sum / matches.length : sum;
+	const aggregated = AVG_METRICS.has(key) ? sum / matches.length : sum;
+	return roundForKey(key, aggregated);
 }
 
 /**
