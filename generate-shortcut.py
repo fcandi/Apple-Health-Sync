@@ -135,12 +135,12 @@ actions.append({
 
 # === Health Queries ===
 # All use Limit 1 to avoid multi-value problems
-actions.append(health_find_action(uuid_steps, 'Steps', group_by_day=True, limit=1))
+actions.append(health_find_action(uuid_steps, 'Steps', group_by_day=True))
 actions.append(health_find_action(uuid_rhr, 'Resting Heart Rate',
     group_by_day=False, sort_latest=True, limit=1))
 actions.append(health_find_action(uuid_hrv, 'Heart Rate Variability',
     group_by_day=False, sort_latest=True, limit=1))
-actions.append(health_find_action(uuid_cal, 'Active Calories', group_by_day=True, limit=1))
+actions.append(health_find_action(uuid_cal, 'Active Calories', group_by_day=True))
 # Exercise Minutes — may show error dialog if no data exists (e.g. no Apple Watch)
 # User taps OK, shortcut continues with empty value, plugin handles it gracefully
 actions.append(health_find_action(uuid_exercise, 'Exercise Minutes', group_by_day=True, limit=1))
