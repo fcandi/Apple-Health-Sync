@@ -37,8 +37,16 @@ const INT_METRICS = new Set([
 	"spo2", "respiration_rate", "walking_hr_avg",
 ]);
 
+/** Metriken, die auf 1 Nachkommastelle gerundet werden (Gewicht, Distanz, etc.). */
+const DECIMAL1_METRICS = new Set([
+	"distance_km", "distance_mi", "weight_kg", "weight_lbs",
+	"body_fat_pct", "vo2max", "wrist_temp",
+]);
+
 function roundForKey(key: string, n: number): number {
-	return INT_METRICS.has(key) ? Math.round(n) : n;
+	if (INT_METRICS.has(key)) return Math.round(n);
+	if (DECIMAL1_METRICS.has(key)) return Math.round(n * 10) / 10;
+	return n;
 }
 
 function parseNumList(raw: unknown): number[] {
@@ -155,6 +163,25 @@ export function parseShortcutPayload(
 			} else if (typeof value === "number" || typeof value === "string") {
 				metrics[key] = value;
 			}
+		}
+
+		// Synthetische Metriken
+		// distance_m (HealthKit liefert Meter) → distance_km
+		if (typeof metrics.distance_m === "number") {
+			metrics.distance_km = roundForKey("distance_km", metrics.distance_m / 1000);
+			delete metrics.distance_m;
+		}
+		// calories_total = active + resting (wenn beide vorhanden)
+		if (typeof metrics.calories_active === "number" &&
+			typeof metrics.calories_resting === "number") {
+			metrics.calories_total = roundForKey(
+				"calories_total",
+				metrics.calories_active + metrics.calories_resting
+			);
+		}
+		// body_fat_pct: HealthKit liefert Fraktion (0.18) → in Prozent umrechnen
+		if (typeof metrics.body_fat_pct === "number" && metrics.body_fat_pct < 1) {
+			metrics.body_fat_pct = roundForKey("body_fat_pct", metrics.body_fat_pct * 100);
 		}
 	}
 

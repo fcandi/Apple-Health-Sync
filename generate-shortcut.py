@@ -143,13 +143,28 @@ def extract_start_date(action_uuid, health_uuid):
 
 
 # --- Plan: pro Metrik 2 Aktionen (Find, Extract Start Date) — Formatierung inline ---
+# iOS-Typname = HealthKit Display-Name (EN, nicht der HK-Identifier).
 METRICS = [
-    # (json_key, iOS-Typname)
-    ('steps',           'Steps'),
-    ('resting_hr',      'Resting Heart Rate'),
-    ('hrv',             'Heart Rate Variability'),
-    ('calories_active', 'Active Calories'),
-    ('intensity_min',   'Exercise Time'),
+    # Standard
+    ('steps',            'Steps'),
+    ('resting_hr',       'Resting Heart Rate'),
+    ('hrv',              'Heart Rate Variability'),
+    ('calories_active',  'Active Calories'),
+    ('intensity_min',    'Exercise Time'),
+    # Extended — Garmin-kompatibel
+    ('calories_resting', 'Resting Calories'),
+    ('spo2',             'Blood Oxygen'),
+    ('respiration_rate', 'Respiratory Rate'),
+    ('distance_m',       'Walking + Running Distance'),  # Plugin teilt → distance_km
+    ('floors',           'Flights Climbed'),
+    ('weight_kg',        'Weight'),
+    ('body_fat_pct',     'Body Fat Percentage'),
+    # Extended — Apple-exklusiv
+    ('vo2max',           'VO2 Max'),
+    ('walking_hr_avg',   'Walking Heart Rate Average'),
+    ('stand_hours',      'Stand Hours'),
+    ('wrist_temp',       'Wrist Temperature'),
+    ('mindful_min',      'Mindful Minutes'),
 ]
 
 # --- UUIDs für Date-Setup ---

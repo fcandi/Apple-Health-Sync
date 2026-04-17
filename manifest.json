@@ -1,7 +1,7 @@
 {
 	"id": "apple-health-sync",
 	"name": "Apple Health Sync",
-	"version": "0.1.0-alpha.8",
+	"version": "0.1.0-alpha.9",
 	"minAppVersion": "0.15.0",
 	"description": "Sync Apple Health data into your Daily Notes as frontmatter properties via iOS Shortcuts.",
 	"author": "fcandi",
