@@ -41,12 +41,14 @@ export default class AppleHealthSyncPlugin extends Plugin {
 		}
 
 		try {
-			// Fix malformed JSON from Shortcuts: empty values, newlines in numbers
+			// Fix malformed JSON from Shortcuts:
+			// 1. Multi-value results come as "123\n456" — take last value only
+			// 2. Empty values like "key":,"next" → "key":null,"next"
 			const cleanedData = data
-				.replace(/\n/g, "")           // Remove newlines (multi-value concat)
-				.replace(/:,/g, ":null,")     // Empty value before comma
-				.replace(/:}/g, ":null}")     // Empty value before closing brace
-				.replace(/:""}/g, ":null}");  // Empty string value
+				.replace(/(\d+\.?\d*)\n(\d+\.?\d*)/g, "$2")  // Keep last number in multi-value
+				.replace(/:,/g, ":null,")
+				.replace(/:}/g, ":null}")
+				.replace(/:\n/g, ":null,");
 			console.debug("Apple Health Sync: cleaned data:", cleanedData.substring(0, 200));
 			const payload = JSON.parse(cleanedData) as { date?: string; metrics?: Record<string, unknown>; workouts?: unknown[] };
 
