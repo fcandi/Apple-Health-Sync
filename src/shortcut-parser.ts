@@ -43,6 +43,18 @@ const DECIMAL1_METRICS = new Set([
 	"body_fat_pct", "vo2max", "wrist_temp",
 ]);
 
+/**
+ * Metriken, die niemals sinnvoll 0 sein können (Vitalwerte, Gewicht, VO2max etc.).
+ * iOS' "Fehlende ausfüllen"-Option produziert bei Tagen ohne Messung 0-Werte.
+ * Für diese Metriken skippen wir 0 — bestehender Frontmatter-Wert bleibt dann erhalten.
+ */
+const SKIP_IF_ZERO = new Set([
+	"resting_hr", "hrv", "walking_hr_avg",
+	"spo2", "respiration_rate",
+	"weight_kg", "weight_lbs", "body_fat_pct", "vo2max",
+	"wrist_temp",
+]);
+
 function roundForKey(key: string, n: number): number {
 	if (INT_METRICS.has(key)) return Math.round(n);
 	if (DECIMAL1_METRICS.has(key)) return Math.round(n * 10) / 10;
@@ -130,10 +142,14 @@ function resolveVD(pair: VDPair, key: string, targetDate: string): number | null
 	}
 
 	if (matches.length === 0) return null;
-	if (matches.length === 1) return roundForKey(key, matches[0]!);
 
-	const sum = matches.reduce((a, b) => a + b, 0);
-	const aggregated = AVG_METRICS.has(key) ? sum / matches.length : sum;
+	const aggregated = matches.length === 1
+		? matches[0]!
+		: (AVG_METRICS.has(key)
+			? matches.reduce((a, b) => a + b, 0) / matches.length
+			: matches.reduce((a, b) => a + b, 0));
+
+	if (SKIP_IF_ZERO.has(key) && aggregated === 0) return null;
 	return roundForKey(key, aggregated);
 }
 
@@ -166,11 +182,6 @@ export function parseShortcutPayload(
 		}
 
 		// Synthetische Metriken
-		// distance_m (HealthKit liefert Meter) → distance_km
-		if (typeof metrics.distance_m === "number") {
-			metrics.distance_km = roundForKey("distance_km", metrics.distance_m / 1000);
-			delete metrics.distance_m;
-		}
 		// calories_total = active + resting (wenn beide vorhanden)
 		if (typeof metrics.calories_active === "number" &&
 			typeof metrics.calories_resting === "number") {

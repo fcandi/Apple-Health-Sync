@@ -155,7 +155,7 @@ METRICS = [
     ('calories_resting', 'Resting Calories'),
     ('spo2',             'Oxygen Saturation'),
     ('respiration_rate', 'Respiratory Rate'),
-    ('distance_m',       'Walking + Running Distance'),  # Plugin teilt → distance_km
+    ('distance_km',      'Walking + Running Distance'),  # iOS liefert in km (DE-Default)
     ('floors',           'Flights Climbed'),
     ('weight_kg',        'Weight'),
     ('body_fat_pct',     'Body Fat Percentage'),
