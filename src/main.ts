@@ -83,10 +83,15 @@ export default class AppleHealthSyncPlugin extends Plugin {
 						.replace("{date}", date)
 				);
 			} else {
-				new Notice(
-					`${t("noticeSyncNoData", this.settings.language)} (${metricCount}/${totalMetricKeys} · ${date})`,
-					10000
-				);
+				const base = `${t("noticeSyncNoData", this.settings.language)} (${metricCount}/${totalMetricKeys} · ${date})`;
+				if (metricCount === 0) {
+					const snippet = cleanedData.length > 400
+						? cleanedData.substring(0, 400) + "…"
+						: cleanedData;
+					new Notice(`${base}\n\n${snippet}`, 30000);
+				} else {
+					new Notice(base, 10000);
+				}
 			}
 		} catch (error) {
 			console.error("Apple Health Sync: URI handler error", error);
