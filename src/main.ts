@@ -41,23 +41,18 @@ export default class AppleHealthSyncPlugin extends Plugin {
 		}
 
 		try {
-			// Fix malformed JSON from Shortcuts:
-			// 1. Multi-value: "123\n456" → take the larger value (fuller day)
-			// 2. Empty values: "key":,"next" → "key":null,"next"
+			// iOS-Listen in Text-Variablen enthalten rohe Newlines — in JSON-Strings
+			// technisch ungültig. Vor JSON.parse zu \n escapen.
 			const cleanedData = data
-				.replace(/(\d+\.?\d*)\n(\d+\.?\d*)/g, (_, a, b) =>
-					String(Math.max(Number(a), Number(b))))
+				.replace(/\n/g, "\\n")
 				.replace(/:,/g, ":null,")
-				.replace(/:}/g, ":null}")
-				.replace(/:\n/g, ":null,");
+				.replace(/:}/g, ":null}");
 			console.debug("Apple Health Sync: cleaned data:", cleanedData.substring(0, 200));
 			const payload = JSON.parse(cleanedData) as { date?: string; metrics?: Record<string, unknown>; workouts?: unknown[] };
 
-			// Date can come from URL param or from inside JSON payload
 			if (!date && payload.date) {
 				date = payload.date;
 			}
-			// Fallback: yesterday
 			if (!date) {
 				const d = new Date();
 				d.setDate(d.getDate() - 1);
@@ -69,7 +64,7 @@ export default class AppleHealthSyncPlugin extends Plugin {
 				return;
 			}
 
-			const healthData = parseShortcutPayload(payload, v ?? "1");
+			const healthData = parseShortcutPayload(payload, v ?? "1", date);
 			const success = await this.syncManager.writeData(
 				date, healthData, this.settings
 			);

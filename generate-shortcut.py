@@ -1,32 +1,42 @@
 #!/usr/bin/env python3
 """
-Generates the Apple Health Sync iOS Shortcut as a .shortcut (plist) file.
-v7 — Date inside JSON payload, skip-on-error for optional metrics.
-Based on analysis of user's real shortcut plist structure.
+Apple Health Sync iOS Shortcut Generator — v10 (Option C).
+
+Strategie: Shortcut liefert pro Metrik zwei parallele Listen (Werte + formatierte
+Tagesdatums), Plugin filtert den gestrigen Kalendertag heraus. Gründe:
+
+  - Kein 24h-Fenster-Problem (Plugin wählt per Tages-String, keine Datums-Arithmetik)
+  - Zeitzonen-resistent (Shortcut und Plugin teilen denselben yyyy-MM-dd-String)
+  - Shortcut bleibt schlank — jede Filter-Logikänderung = Plugin-Update via
+    Obsidian-Store, kein manuelles Re-Install des Shortcuts
 """
 import plistlib
 import uuid
 
+
 def make_uuid():
     return str(uuid.uuid4()).upper()
 
+
 def action_output_ref(action_uuid, output_name):
-    """Plain reference — used inside attachmentsByRange (NO WFTextTokenAttachment wrapper)."""
+    """Plain reference — used inside attachmentsByRange."""
     return {
         'OutputUUID': action_uuid,
         'Type': 'ActionOutput',
         'OutputName': output_name,
     }
 
+
 def param_ref(action_uuid, output_name):
-    """Wrapped reference — used for standalone action parameters."""
+    """WFTextTokenAttachment — for standalone action parameters (WFDate, WFInput)."""
     return {
         'Value': action_output_ref(action_uuid, output_name),
         'WFSerializationType': 'WFTextTokenAttachment',
     }
 
+
 def param_ref_as_text(action_uuid, output_name):
-    """Reference as WFTextTokenString — for params that expect text input."""
+    """WFTextTokenString — for params that expect text input."""
     return {
         'Value': {
             'string': '\ufffc',
@@ -37,9 +47,10 @@ def param_ref_as_text(action_uuid, output_name):
         'WFSerializationType': 'WFTextTokenString',
     }
 
+
 def text_with_vars(text_parts):
     """Build WFTextTokenString. Variable refs are (uuid, output_name) tuples."""
-    result_text = ""
+    result_text = ''
     attachments = {}
     for part in text_parts:
         if isinstance(part, str):
@@ -47,8 +58,8 @@ def text_with_vars(text_parts):
         elif isinstance(part, tuple):
             action_uuid, output_name = part
             pos = len(result_text)
-            result_text += "\ufffc"
-            range_key = "{" + str(pos) + ", 1}"
+            result_text += '\ufffc'
+            range_key = '{' + str(pos) + ', 1}'
             attachments[range_key] = action_output_ref(action_uuid, output_name)
     value = {'string': result_text}
     if attachments:
@@ -58,109 +69,155 @@ def text_with_vars(text_parts):
         'WFSerializationType': 'WFTextTokenString',
     }
 
-def health_find_action(action_uuid, display_name, group_by_day=True,
-                        sort_latest=False, limit=None):
+
+# DE-OutputNames (Gerätesprache Deutsch) — müssen zur iOS-Locale passen,
+# sonst findet die Laufzeit die Variable nicht.
+OUT_CURRENT_DATE = 'Aktuelles Datum'
+OUT_ADJUSTED_DATE = 'Angepasstes Datum'
+OUT_FORMATTED_DATE = 'Formatiertes Datum'
+OUT_HEALTH = 'Health-Messungen'
+OUT_START_DATE = 'Startdatum'
+OUT_TEXT = 'Text'
+OUT_URLENCODED = 'Text der codierten URL'
+
+
+def health_find(action_uuid, display_name, days=3):
+    """Find-Health-Samples mit Filter 'letzte N Tage' + Gruppieren nach Tag."""
     filter_templates = [
         {
             'Bounded': True, 'Operator': 4, 'Removable': False, 'Property': 'Type',
-            'Values': {'Enumeration': {'Value': display_name, 'WFSerializationType': 'WFStringSubstitutableState'}},
+            'Values': {'Enumeration': {'Value': display_name,
+                                        'WFSerializationType': 'WFStringSubstitutableState'}},
         },
         {
-            'Operator': 1001, 'Removable': True, 'Property': 'Start Date',
-            'Values': {'Unit': 16, 'Number': 1},
+            'Bounded': True, 'Operator': 1001, 'Removable': False, 'Property': 'Start Date',
+            'Values': {'Unit': 16, 'Number': str(days)},
         },
     ]
-    params = {
-        'UUID': action_uuid,
-        'WFContentItemFilter': {
-            'Value': {
-                'WFActionParameterFilterPrefix': 1,
-                'WFContentPredicateBoundedDate': False,
-                'WFActionParameterFilterTemplates': filter_templates,
-            },
-            'WFSerializationType': 'WFContentPredicateTableTemplate',
-        },
-    }
-    if group_by_day:
-        params['WFHKSampleFilteringGroupBy'] = 'Day'
-    if sort_latest:
-        params['WFContentItemSortProperty'] = 'Start Date'
-        params['WFContentItemSortOrder'] = 'Latest First'
-    if limit is not None:
-        params['WFContentItemLimitEnabled'] = True
-        params['WFContentItemLimitNumber'] = limit
     return {
         'WFWorkflowActionIdentifier': 'is.workflow.actions.filter.health.quantity',
-        'WFWorkflowActionParameters': params,
+        'WFWorkflowActionParameters': {
+            'UUID': action_uuid,
+            'WFHKSampleFilteringGroupBy': 'Day',
+            'WFContentItemFilter': {
+                'Value': {
+                    'WFActionParameterFilterPrefix': 1,
+                    'WFContentPredicateBoundedDate': False,
+                    'WFActionParameterFilterTemplates': filter_templates,
+                },
+                'WFSerializationType': 'WFContentPredicateTableTemplate',
+            },
+        },
     }
 
 
-# --- UUIDs ---
-uuid_adjust   = make_uuid()
-uuid_format   = make_uuid()
-uuid_steps    = make_uuid()
-uuid_rhr      = make_uuid()
-uuid_hrv      = make_uuid()
-uuid_cal      = make_uuid()
-uuid_exercise = make_uuid()
-uuid_json     = make_uuid()
-uuid_encode   = make_uuid()
-uuid_url      = make_uuid()
+def extract_start_date(action_uuid, health_uuid):
+    """Details-of-Health-Sample → Start Date (liefert parallele Liste zur Health-Liste)."""
+    return {
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.properties.health.quantity',
+        'WFWorkflowActionParameters': {
+            'UUID': action_uuid,
+            'WFContentItemPropertyName': 'Start Date',
+            'WFInput': param_ref(health_uuid, OUT_HEALTH),
+        },
+    }
+
+
+def format_date(action_uuid, input_uuid, input_output_name, fmt='yyyy-MM-dd'):
+    """Format-Date — funktioniert transparent auf Liste (iOS mapt pro Element)."""
+    return {
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.format.date',
+        'WFWorkflowActionParameters': {
+            'UUID': action_uuid,
+            'WFDateFormatStyle': 'Custom',
+            'WFDateFormat': fmt,
+            'WFDate': param_ref(input_uuid, input_output_name),
+        },
+    }
+
+
+# --- Plan: pro Metrik 3 Aktionen (Find, Extract Start Date, Format Date yyyy-MM-dd) ---
+METRICS = [
+    # (json_key, iOS-Typname)
+    ('steps',           'Steps'),
+    ('resting_hr',      'Resting Heart Rate'),
+    ('hrv',             'Heart Rate Variability'),
+    ('calories_active', 'Active Calories'),
+    ('intensity_min',   'Exercise Time'),
+]
+
+# --- UUIDs für Date-Setup ---
+uuid_now       = make_uuid()
+uuid_today     = make_uuid()
+uuid_yesterday = make_uuid()
+uuid_fmt_yest  = make_uuid()
+uuid_json      = make_uuid()
+uuid_encode    = make_uuid()
+uuid_url       = make_uuid()
+
+# Pro Metrik drei UUIDs
+metric_uuids = {
+    key: (make_uuid(), make_uuid(), make_uuid())  # find, extract, format
+    for key, _ in METRICS
+}
 
 actions = []
 
-# === Action 1: Adjust Date — Subtract 1 Day ===
+# === 1. Aktuelles Datum ===
+actions.append({
+    'WFWorkflowActionIdentifier': 'is.workflow.actions.date',
+    'WFWorkflowActionParameters': {'UUID': uuid_now},
+})
+
+# === 2. Anfang des Tages (heute 00:00) ===
 actions.append({
     'WFWorkflowActionIdentifier': 'is.workflow.actions.adjustdate',
     'WFWorkflowActionParameters': {
+        'UUID': uuid_today,
+        'WFAdjustOperation': 'Get Start of Day',
+        'WFDate': param_ref(uuid_now, OUT_CURRENT_DATE),
+    },
+})
+
+# === 3. − 1 Tag → gestern 00:00 ===
+actions.append({
+    'WFWorkflowActionIdentifier': 'is.workflow.actions.adjustdate',
+    'WFWorkflowActionParameters': {
+        'UUID': uuid_yesterday,
+        'WFAdjustOperation': 'Subtract',
         'WFDuration': {
             'Value': {'Unit': 'days', 'Magnitude': '1'},
             'WFSerializationType': 'WFQuantityFieldValue',
         },
-        'WFAdjustOperation': 'Subtract',
-        'UUID': uuid_adjust,
+        'WFDate': param_ref(uuid_today, OUT_ADJUSTED_DATE),
     },
 })
 
-# === Action 2: Format Date (yyyy-MM-dd) ===
-actions.append({
-    'WFWorkflowActionIdentifier': 'is.workflow.actions.format.date',
-    'WFWorkflowActionParameters': {
-        'WFDateFormatStyle': 'Custom',
-        'UUID': uuid_format,
-        'WFDateFormat': 'yyyy-MM-dd',
-        'WFDate': param_ref(uuid_adjust, 'Adjusted Date'),
-    },
-})
+# === 4. Gestern formatieren → "yyyy-MM-dd" (Plugin-Autorität für "welcher Tag") ===
+actions.append(format_date(uuid_fmt_yest, uuid_yesterday, OUT_ADJUSTED_DATE))
 
-# === Health Queries ===
-# All use Limit 1 to avoid multi-value problems
-actions.append(health_find_action(uuid_steps, 'Steps', group_by_day=True))
-actions.append(health_find_action(uuid_rhr, 'Resting Heart Rate',
-    group_by_day=False, sort_latest=True, limit=1))
-actions.append(health_find_action(uuid_hrv, 'Heart Rate Variability',
-    group_by_day=False, sort_latest=True, limit=1))
-actions.append(health_find_action(uuid_cal, 'Active Calories', group_by_day=True))
-# Exercise Minutes — may show error dialog if no data exists (e.g. no Apple Watch)
-# User taps OK, shortcut continues with empty value, plugin handles it gracefully
-actions.append(health_find_action(uuid_exercise, 'Exercise Minutes', group_by_day=True, limit=1))
+# === 5. Pro Metrik: Find Health + Extract Start Date + Format Date ===
+for key, display_name in METRICS:
+    u_find, u_extract, u_fmt = metric_uuids[key]
+    actions.append(health_find(u_find, display_name, days=3))
+    actions.append(extract_start_date(u_extract, u_find))
+    actions.append(format_date(u_fmt, u_extract, OUT_START_DATE))
 
-# === Text: JSON payload (date included in JSON for robustness) ===
-json_parts = [
-    '{"date":"',
-    (uuid_format, 'Formatted Date'),
-    '","metrics":{"steps":',
-    (uuid_steps, 'Health-Messungen'),
-    ',"resting_hr":',
-    (uuid_rhr, 'Health-Messungen'),
-    ',"hrv":',
-    (uuid_hrv, 'Health-Messungen'),
-    ',"calories_active":',
-    (uuid_cal, 'Health-Messungen'),
-    ',"intensity_min":',
-    (uuid_exercise, 'Health-Messungen'),
-    '}}',
-]
+# === 6. JSON-Payload bauen ===
+# Jede Metrik ist ein Objekt {"v":"<values-list>","d":"<dates-list>"}.
+# iOS fügt Listen standardmäßig als Newline-separierte Texte ein — Plugin parst robust.
+json_parts = ['{"date":"', (uuid_fmt_yest, OUT_FORMATTED_DATE), '","metrics":{']
+for i, (key, _) in enumerate(METRICS):
+    u_find, _, u_fmt = metric_uuids[key]
+    if i > 0:
+        json_parts.append(',')
+    json_parts.append(f'"{key}":' + '{"v":"')
+    json_parts.append((u_find, OUT_HEALTH))
+    json_parts.append('","d":"')
+    json_parts.append((u_fmt, OUT_FORMATTED_DATE))
+    json_parts.append('"}')
+json_parts.append('}}')
+
 actions.append({
     'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
     'WFWorkflowActionParameters': {
@@ -169,39 +226,38 @@ actions.append({
     },
 })
 
-# === URL Encode ===
+# === 7. URL-Encode ===
 actions.append({
     'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
     'WFWorkflowActionParameters': {
         'UUID': uuid_encode,
-        'WFInput': param_ref_as_text(uuid_json, 'Text'),
+        'WFInput': param_ref_as_text(uuid_json, OUT_TEXT),
     },
 })
 
-# === Text: Obsidian URL ===
-url_parts = [
-    'obsidian://apple-health-sync?data=',
-    (uuid_encode, 'Text der codierten URL'),
-    '&v=1',
-]
+# === 8. Obsidian-URL ===
 actions.append({
     'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
     'WFWorkflowActionParameters': {
         'UUID': uuid_url,
-        'WFTextActionText': text_with_vars(url_parts),
+        'WFTextActionText': text_with_vars([
+            'obsidian://apple-health-sync?data=',
+            (uuid_encode, OUT_URLENCODED),
+            '&v=2',
+        ]),
     },
 })
 
-# === Open URL ===
+# === 9. URL öffnen ===
 actions.append({
     'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
     'WFWorkflowActionParameters': {
-        'WFInput': param_ref(uuid_url, 'Text'),
+        'WFInput': param_ref(uuid_url, OUT_TEXT),
         'UUID': make_uuid(),
     },
 })
 
-# === Build shortcut ===
+# === Shortcut zusammenbauen ===
 shortcut = {
     'WFWorkflowMinimumClientVersionString': '900',
     'WFWorkflowMinimumClientVersion': 900,
@@ -225,4 +281,4 @@ shortcut = {
 with open('Apple-Health-Sync.unsigned.shortcut', 'wb') as f:
     plistlib.dump(shortcut, f, fmt=plistlib.FMT_BINARY)
 
-print("Generated shortcut (v7)")
+print(f'Generated shortcut v10 — {len(actions)} actions, {len(METRICS)} metrics, v=2 payload format')
