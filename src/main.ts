@@ -7,6 +7,9 @@ import { t } from "./i18n/t";
 export default class AppleHealthSyncPlugin extends Plugin {
 	settings: HealthSyncSettings;
 	private syncManager: SyncManager;
+	/** Timestamp of the last manual trigger. Lets the URI handler bypass the cooldown when the user explicitly fired the Obsidian command. */
+	private manualTriggerAt = 0;
+	private static readonly MANUAL_TRIGGER_WINDOW_MS = 60_000;
 
 	async onload() {
 		await this.loadSettings();
@@ -38,6 +41,20 @@ export default class AppleHealthSyncPlugin extends Plugin {
 			new Notice(t("noticeInvalidData", this.settings.language), 8000);
 			console.error("Apple Health Sync: empty data param. All params:", Object.keys(params).join(", "));
 			return;
+		}
+
+		// Cooldown: Skip if previous successful sync is too recent.
+		// Bypassed if the Obsidian "trigger sync" command was fired <60s ago — that's an explicit user intent.
+		const cooldownMinutes = this.settings.syncCooldownMinutes;
+		const manualBypass = Date.now() - this.manualTriggerAt < AppleHealthSyncPlugin.MANUAL_TRIGGER_WINDOW_MS;
+		if (cooldownMinutes > 0 && !manualBypass && this.settings.lastSyncTime > 0) {
+			const elapsedMs = Date.now() - this.settings.lastSyncTime;
+			const cooldownMs = cooldownMinutes * 60_000;
+			if (elapsedMs < cooldownMs) {
+				const remainingMin = Math.ceil((cooldownMs - elapsedMs) / 60_000);
+				console.debug(`Apple Health Sync: skipped (cooldown — ${remainingMin}min remaining of ${cooldownMinutes}min)`);
+				return;
+			}
 		}
 
 		try {
@@ -101,6 +118,7 @@ export default class AppleHealthSyncPlugin extends Plugin {
 
 	/** Opens the iOS Shortcut via URL scheme */
 	private triggerShortcut() {
+		this.manualTriggerAt = Date.now();
 		const shortcutName = this.settings.shortcutName || "Apple Health Sync";
 		const encoded = encodeURIComponent(shortcutName);
 		window.open(`shortcuts://run-shortcut?name=${encoded}`);

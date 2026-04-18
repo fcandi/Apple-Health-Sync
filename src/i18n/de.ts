@@ -11,6 +11,8 @@ export const de: Record<TranslationKeys, string> = {
 	settingsShortcutInstallButton: "Vollständigen Shortcut installieren",
 	settingsShortcutName: "Shortcut-Name",
 	settingsShortcutNameDesc: "Name des installierten Shortcuts (für den 'Sync auslösen' Befehl)",
+	settingsSyncCooldown: "Sync-Cooldown (Minuten)",
+	settingsSyncCooldownDesc: "Sync überspringen, wenn der letzte erfolgreiche Sync weniger als diese Minuten zurückliegt. Verhindert Mehrfach-Syncs bei 'Beim Öffnen von Obsidian'-Automationen. 0 = deaktiviert. Manueller Trigger läuft immer.",
 	settingsLastSync: "Letzter Sync",
 	settingsLastSyncNever: "Noch nie",
 

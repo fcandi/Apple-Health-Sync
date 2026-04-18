@@ -9,6 +9,8 @@ export const en = {
 	settingsShortcutInstallButton: "Install full Shortcut",
 	settingsShortcutName: "Shortcut name",
 	settingsShortcutNameDesc: "Name of the installed Shortcut (for the 'trigger sync' command)",
+	settingsSyncCooldown: "Sync cooldown in minutes",
+	settingsSyncCooldownDesc: "Skip the sync when the previous one completed less than this many minutes ago. Prevents redundant syncs from app-open automations. Set to 0 to disable. The manual trigger command always runs.",
 	settingsLastSync: "Last sync",
 	settingsLastSyncNever: "Never",
 

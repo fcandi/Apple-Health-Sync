@@ -18,6 +18,7 @@ export interface HealthSyncSettings {
 	shortcutIcloudUrl: string;
 	lastSyncDate: string;
 	lastSyncTime: number;
+	syncCooldownMinutes: number;
 
 	// Daily Notes
 	dailyNotePath: string;
@@ -39,6 +40,7 @@ export const DEFAULT_SETTINGS: HealthSyncSettings = {
 	shortcutIcloudUrl: "",
 	lastSyncDate: "",
 	lastSyncTime: 0,
+	syncCooldownMinutes: 60,
 
 	dailyNotePath: "",
 	dailyNoteFormat: "YYYY-MM-DD",
@@ -106,6 +108,18 @@ export class HealthSyncSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.shortcutName)
 				.onChange(async (value) => {
 					this.plugin.settings.shortcutName = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Cooldown
+		new Setting(containerEl)
+			.setName(t("settingsSyncCooldown", lang))
+			.setDesc(t("settingsSyncCooldownDesc", lang))
+			.addText(text => text
+				.setValue(String(this.plugin.settings.syncCooldownMinutes))
+				.onChange(async (value) => {
+					const n = parseInt(value, 10);
+					this.plugin.settings.syncCooldownMinutes = Number.isFinite(n) && n >= 0 ? n : 0;
 					await this.plugin.saveSettings();
 				}));
 
