@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS: HealthSyncSettings = {
 	shortcutIcloudUrl: "",
 	lastSyncDate: "",
 	lastSyncTime: 0,
-	syncCooldownMinutes: 60,
+	syncCooldownMinutes: 0,
 
 	dailyNotePath: "",
 	dailyNoteFormat: "YYYY-MM-DD",
