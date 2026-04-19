@@ -1,4 +1,4 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Plugin, TFile } from "obsidian";
 import { DEFAULT_SETTINGS, HealthSyncSettings, HealthSyncSettingTab } from "./settings";
 import { SyncManager } from "./sync";
 import { parseShortcutPayload, parseShortcutPayloadMultiDay } from "./shortcut-parser";
@@ -98,6 +98,7 @@ export default class AppleHealthSyncPlugin extends Plugin {
 			console.debug("Apple Health Sync: parsed", syncDays.length, "days (" + syncDays.join(",") + "), totalMetricKeys:", totalMetricKeys);
 
 			const result = await this.syncManager.writeData(dateToData, this.settings);
+			await this.writeDebugFile(payload, dateToData, syncDays, result, cleanedData);
 			const writtenPlusUnchanged = result.written + result.unchanged;
 
 			if (writtenPlusUnchanged > 0) {
@@ -121,6 +122,60 @@ export default class AppleHealthSyncPlugin extends Plugin {
 		} catch (error) {
 			console.error("Apple Health Sync: URI handler error", error);
 			new Notice(t("noticeSyncError", this.settings.language));
+		}
+	}
+
+	/** Writes a debug file to the vault root after every sync run. Remove after debugging. */
+	private async writeDebugFile(
+		payload: { metrics?: Record<string, unknown> },
+		dateToData: Record<string, HealthData>,
+		syncDays: string[],
+		result: { written: number; unchanged: number; empty: number },
+		rawPayload: string
+	): Promise<void> {
+		try {
+			const lines: string[] = [
+				`# Apple Health Sync — Debug ${new Date().toISOString()}`,
+				``,
+				`## Sync-Ergebnis`,
+				`- Geschrieben: ${result.written}`,
+				`- Unverändert: ${result.unchanged}`,
+				`- Leer: ${result.empty}`,
+				`- Tage im Payload: ${syncDays.join(", ")}`,
+				``,
+				`## Steps pro Tag (nach Plugin-Parsing)`,
+			];
+			for (const day of syncDays) {
+				const steps = dateToData[day]?.metrics["steps"];
+				lines.push(`- ${day}: ${steps ?? "null (kein Wert)"}`);
+			}
+
+			lines.push(``, `## Rohe Steps-VD aus Shortcut-Payload`);
+			const rawSteps = payload.metrics?.["steps"];
+			if (rawSteps && typeof rawSteps === "object" && "v" in rawSteps && "d" in rawSteps) {
+				const vd = rawSteps as { v: unknown; d: unknown };
+				lines.push("```");
+				lines.push(`v: ${String(vd.v).substring(0, 300)}`);
+				lines.push(`d: ${String(vd.d).substring(0, 300)}`);
+				lines.push("```");
+			} else {
+				lines.push(`(keine Steps-VD gefunden im Payload)`);
+			}
+
+			lines.push(``, `## Rohe Payload (erste 600 Zeichen)`, "```");
+			lines.push(rawPayload.substring(0, 600));
+			lines.push("```");
+
+			const content = lines.join("\n");
+			const path = "apple-health-debug.md";
+			const existing = this.app.vault.getAbstractFileByPath(path);
+			if (existing instanceof TFile) {
+				await this.app.vault.modify(existing, content);
+			} else {
+				await this.app.vault.create(path, content);
+			}
+		} catch (e) {
+			console.error("Apple Health Sync: debug write failed", e);
 		}
 	}
 
