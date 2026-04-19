@@ -54,6 +54,7 @@ export default class AppleHealthSyncPlugin extends Plugin {
 			if (elapsedMs < cooldownMs) {
 				const remainingMin = Math.ceil((cooldownMs - elapsedMs) / 60_000);
 				console.debug(`Apple Health Sync: skipped (cooldown — ${remainingMin}min remaining of ${cooldownMinutes}min)`);
+				await this.writeSkippedDebugFile(remainingMin, cooldownMinutes);
 				return;
 			}
 		}
@@ -134,6 +135,20 @@ export default class AppleHealthSyncPlugin extends Plugin {
 		}
 	}
 
+	/** Writes a short debug note when sync is skipped due to cooldown. */
+	private async writeSkippedDebugFile(remainingMin: number, cooldownMin: number): Promise<void> {
+		const lines = [
+			`# Apple Health Sync — Debug`,
+			`**Letzter Sync:** ${new Date().toLocaleString()}`,
+			``,
+			`## Ergebnis`,
+			`**ÜBERSPRUNGEN** — Cooldown aktiv (noch ${remainingMin} von ${cooldownMin} Minuten)`,
+			``,
+			`→ Cooldown in den Plugin-Einstellungen auf 0 setzen zum Debuggen.`,
+		];
+		await this.writeDebugContent(lines.join("\n"));
+	}
+
 	/** Writes a sync debug file to _apple-health-sync/debug.md in the vault. */
 	private async writeDebugFile(
 		payload: { metrics?: Record<string, unknown> },
@@ -176,21 +191,23 @@ export default class AppleHealthSyncPlugin extends Plugin {
 			lines.push(rawPayload.substring(0, 800));
 			lines.push("```");
 
-			const content = lines.join("\n");
-			const folder = "_apple-health-sync";
-			const path = `${folder}/debug.md`;
-
-			if (!this.app.vault.getAbstractFileByPath(folder)) {
-				await this.app.vault.createFolder(folder);
-			}
-			const existing = this.app.vault.getAbstractFileByPath(path);
-			if (existing instanceof TFile) {
-				await this.app.vault.modify(existing, content);
-			} else {
-				await this.app.vault.create(path, content);
-			}
+			await this.writeDebugContent(lines.join("\n"));
 		} catch (e) {
 			console.error("Apple Health Sync: debug write failed", e);
+		}
+	}
+
+	private async writeDebugContent(content: string): Promise<void> {
+		const folder = "_apple-health-sync";
+		const path = `${folder}/debug.md`;
+		if (!this.app.vault.getAbstractFileByPath(folder)) {
+			await this.app.vault.createFolder(folder);
+		}
+		const existing = this.app.vault.getAbstractFileByPath(path);
+		if (existing instanceof TFile) {
+			await this.app.vault.modify(existing, content);
+		} else {
+			await this.app.vault.create(path, content);
 		}
 	}
 
