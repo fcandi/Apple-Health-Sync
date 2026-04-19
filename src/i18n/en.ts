@@ -69,7 +69,7 @@ export const en = {
 	metric_mindful_min: "Mindful minutes",
 
 	// Notices
-	noticeSyncSuccess: "Health data synced for {date}",
+	noticeSyncSuccess: "Health sync: {written} written, {unchanged} unchanged ({total} days)",
 	noticeSyncNoData: "No health data received",
 	noticeSyncError: "Error processing health data",
 	noticeInvalidData: "Invalid data received from Shortcut",

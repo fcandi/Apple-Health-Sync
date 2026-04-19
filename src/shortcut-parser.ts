@@ -154,6 +154,38 @@ function resolveVD(pair: VDPair, key: string, targetDate: string): number | null
 }
 
 /**
+ * Collects all unique dates referenced in a v=2 payload. Used by the
+ * multi-day variant to iterate over every day the shortcut returned.
+ */
+export function extractPayloadDates(
+	payload: { metrics?: Record<string, unknown> }
+): string[] {
+	const dates = new Set<string>();
+	if (!payload.metrics) return [];
+	for (const value of Object.values(payload.metrics)) {
+		if (isVDPair(value)) {
+			for (const d of parseStrList(value.d)) dates.add(d);
+		}
+	}
+	return Array.from(dates).sort();
+}
+
+/**
+ * Multi-day variant: parses the payload once per day it contains and
+ * returns a map of date → HealthData.
+ */
+export function parseShortcutPayloadMultiDay(
+	payload: { metrics?: Record<string, unknown>; workouts?: unknown[] },
+	version: string
+): Record<string, HealthData> {
+	const out: Record<string, HealthData> = {};
+	for (const date of extractPayloadDates(payload)) {
+		out[date] = parseShortcutPayload(payload, version, date);
+	}
+	return out;
+}
+
+/**
  * Parses the JSON payload from the iOS Shortcut and produces a HealthData object.
  * Supports two payload formats:
  *   v=1: metrics.X is a number or simple string

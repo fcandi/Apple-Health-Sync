@@ -71,7 +71,7 @@ export const de: Record<TranslationKeys, string> = {
 	metric_mindful_min: "Achtsamkeits-Minuten",
 
 	// Notices
-	noticeSyncSuccess: "Gesundheitsdaten für {date} synchronisiert",
+	noticeSyncSuccess: "Health-Sync: {written} geschrieben, {unchanged} unverändert ({total} Tage)",
 	noticeSyncNoData: "Keine Gesundheitsdaten empfangen",
 	noticeSyncError: "Fehler beim Verarbeiten der Gesundheitsdaten",
 	noticeInvalidData: "Ungültige Daten vom Shortcut empfangen",

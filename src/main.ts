@@ -1,7 +1,8 @@
 import { Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, HealthSyncSettings, HealthSyncSettingTab } from "./settings";
 import { SyncManager } from "./sync";
-import { parseShortcutPayload } from "./shortcut-parser";
+import { parseShortcutPayload, parseShortcutPayloadMultiDay } from "./shortcut-parser";
+import type { HealthData } from "./providers/provider";
 import { t } from "./i18n/t";
 
 export default class AppleHealthSyncPlugin extends Plugin {
@@ -81,34 +82,41 @@ export default class AppleHealthSyncPlugin extends Plugin {
 				return;
 			}
 
-			const healthData = parseShortcutPayload(payload, v ?? "1", date);
-			const metricCount = Object.keys(healthData.metrics).length;
+			// Prefer multi-day parsing (v=2 payload with {v,d} pairs).
+			// Fall back to single-day when the payload has no date info per metric.
+			const multiDayData = parseShortcutPayloadMultiDay(payload, v ?? "2");
+			let dateToData: Record<string, HealthData>;
+			if (Object.keys(multiDayData).length > 0) {
+				dateToData = multiDayData;
+			} else {
+				const single = parseShortcutPayload(payload, v ?? "1", date);
+				dateToData = { [date]: single };
+			}
+
 			const totalMetricKeys = payload.metrics ? Object.keys(payload.metrics).length : 0;
-			console.debug("Apple Health Sync: parsed", metricCount, "of", totalMetricKeys,
-				"metrics for", date, "— keys:", Object.keys(healthData.metrics).join(","));
+			const syncDays = Object.keys(dateToData).sort();
+			console.debug("Apple Health Sync: parsed", syncDays.length, "days (" + syncDays.join(",") + "), totalMetricKeys:", totalMetricKeys);
 
-			const success = await this.syncManager.writeData(
-				date, healthData, this.settings
-			);
+			const result = await this.syncManager.writeData(dateToData, this.settings);
+			const writtenPlusUnchanged = result.written + result.unchanged;
 
-			if (success) {
-				this.settings.lastSyncDate = date;
+			if (writtenPlusUnchanged > 0) {
+				// Track the most recent day that had data
+				this.settings.lastSyncDate = syncDays[syncDays.length - 1] ?? date;
 				this.settings.lastSyncTime = Date.now();
 				await this.saveSettings();
 				new Notice(
 					t("noticeSyncSuccess", this.settings.language)
-						.replace("{date}", date)
+						.replace("{written}", String(result.written))
+						.replace("{unchanged}", String(result.unchanged))
+						.replace("{total}", String(writtenPlusUnchanged))
 				);
 			} else {
-				const base = `${t("noticeSyncNoData", this.settings.language)} (${metricCount}/${totalMetricKeys} · ${date})`;
-				if (metricCount === 0) {
-					const snippet = cleanedData.length > 400
-						? cleanedData.substring(0, 400) + "…"
-						: cleanedData;
-					new Notice(`${base}\n\n${snippet}`, 30000);
-				} else {
-					new Notice(base, 10000);
-				}
+				const base = `${t("noticeSyncNoData", this.settings.language)} (0/${totalMetricKeys} · ${date})`;
+				const snippet = cleanedData.length > 400
+					? cleanedData.substring(0, 400) + "…"
+					: cleanedData;
+				new Notice(`${base}\n\n${snippet}`, 30000);
 			}
 		} catch (error) {
 			console.error("Apple Health Sync: URI handler error", error);

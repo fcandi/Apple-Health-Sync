@@ -50,6 +50,9 @@ async function ensureFolderExists(app: App, folderPath: string): Promise<void> {
 /**
  * Writes health data as frontmatter properties into a daily note.
  * Creates the daily note if it does not exist.
+ * Returns true if the file was actually modified, false if all target values
+ * already matched the existing frontmatter (dirty check — avoids redundant
+ * writes that would trigger sync engines like LiveSync).
  */
 export async function writeToDailyNote(
 	app: App,
@@ -63,7 +66,7 @@ export async function writeToDailyNote(
 		writeTrainings: boolean;
 		writeWorkoutLocation: boolean;
 	}
-): Promise<void> {
+): Promise<boolean> {
 	const fileName = formatDate(date, options.dailyNoteFormat);
 
 	// Search for existing daily note recursively
@@ -104,27 +107,45 @@ export async function writeToDailyNote(
 		}
 	}
 
-	// Write to frontmatter
-	await updateFrontmatter(app, file, properties);
+	// Write to frontmatter (returns false if nothing would change)
+	return updateFrontmatter(app, file, properties);
 }
 
 /**
  * Updates or adds frontmatter properties in a file.
  * Existing properties are overwritten, others are preserved.
+ * Returns true if the file was modified, false if all incoming values
+ * already matched what was already in the frontmatter (dirty-check).
  */
 async function updateFrontmatter(
 	app: App,
 	file: TFile,
 	properties: Record<string, number | string | Record<string, unknown>[]>
-): Promise<void> {
+): Promise<boolean> {
+	// A: Proactively clean up duplicate frontmatter keys
+	await deduplicateFrontmatter(app, file);
+
+	// Dirty-check: skip the write when every incoming key is already present
+	// with the same value. Avoids flipping the file's mtime and firing LiveSync
+	// when nothing changed.
+	const existing = app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+	let changed = false;
+	for (const [key, value] of Object.entries(properties)) {
+		if (!isDeepEqual(existing[key], value)) {
+			changed = true;
+			break;
+		}
+	}
+	if (!changed) {
+		console.debug("Apple Health Sync: frontmatter unchanged, skipping write for", file.path);
+		return false;
+	}
+
 	const applyProperties = (frontmatter: Record<string, unknown>): void => {
 		for (const [key, value] of Object.entries(properties)) {
 			frontmatter[key] = value;
 		}
 	};
-
-	// A: Proactively clean up duplicate frontmatter keys
-	await deduplicateFrontmatter(app, file);
 
 	try {
 		await app.fileManager.processFrontMatter(file, applyProperties);
@@ -138,6 +159,32 @@ async function updateFrontmatter(
 			throw e;
 		}
 	}
+	return true;
+}
+
+function isDeepEqual(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (a == null || b == null) return false;
+	if (typeof a !== typeof b) return false;
+	if (Array.isArray(a) && Array.isArray(b)) {
+		if (a.length !== b.length) return false;
+		for (let i = 0; i < a.length; i++) {
+			if (!isDeepEqual(a[i], b[i])) return false;
+		}
+		return true;
+	}
+	if (typeof a === "object" && typeof b === "object") {
+		const aObj = a as Record<string, unknown>;
+		const bObj = b as Record<string, unknown>;
+		const aKeys = Object.keys(aObj);
+		const bKeys = Object.keys(bObj);
+		if (aKeys.length !== bKeys.length) return false;
+		for (const key of aKeys) {
+			if (!isDeepEqual(aObj[key], bObj[key])) return false;
+		}
+		return true;
+	}
+	return false;
 }
 
 /**

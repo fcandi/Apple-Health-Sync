@@ -4,6 +4,15 @@ import { writeToDailyNote } from "./daily-note";
 import type { HealthSyncSettings } from "./settings";
 import { convertToImperial } from "./units";
 
+export interface SyncResult {
+	/** Days actually written (dirty-check passed) */
+	written: number;
+	/** Days where the dailly note was already up to date */
+	unchanged: number;
+	/** Days with no data after filtering */
+	empty: number;
+}
+
 export class SyncManager {
 	private app: App;
 
@@ -11,42 +20,46 @@ export class SyncManager {
 		this.app = app;
 	}
 
-	/** Write received health data to the daily note */
+	/** Writes one or more days of health data to their respective daily notes. */
 	async writeData(
-		date: string,
-		data: HealthData,
+		dateToData: Record<string, HealthData>,
 		settings: HealthSyncSettings
-	): Promise<boolean> {
-		const hasData = Object.keys(data.metrics).length > 0
-			|| Object.keys(data.activities).length > 0;
-		if (!hasData) return false;
+	): Promise<SyncResult> {
+		const result: SyncResult = { written: 0, unchanged: 0, empty: 0 };
 
-		// Filter to enabled metrics only
-		const filteredMetrics: Record<string, number | string> = {};
-		for (const [key, value] of Object.entries(data.metrics)) {
-			if (settings.enabledMetrics[key]) {
-				filteredMetrics[key] = value;
+		for (const [date, data] of Object.entries(dateToData)) {
+			const hasData = Object.keys(data.metrics).length > 0
+				|| Object.keys(data.activities).length > 0;
+			if (!hasData) {
+				result.empty++;
+				continue;
 			}
+
+			const filteredMetrics: Record<string, number | string> = {};
+			for (const [key, value] of Object.entries(data.metrics)) {
+				if (settings.enabledMetrics[key]) {
+					filteredMetrics[key] = value;
+				}
+			}
+			const filteredData: HealthData = { ...data, metrics: filteredMetrics };
+
+			const outputData = settings.unitSystem === "imperial"
+				? convertToImperial(filteredData)
+				: filteredData;
+
+			const didWrite = await writeToDailyNote(this.app, date, outputData, {
+				dailyNotePath: settings.dailyNotePath,
+				dailyNoteFormat: settings.dailyNoteFormat,
+				prefix: settings.usePrefix ? "ohs_" : "",
+				template: settings.dailyNoteTemplate,
+				writeTrainings: settings.writeTrainings,
+				writeWorkoutLocation: false,
+			});
+
+			if (didWrite) result.written++;
+			else result.unchanged++;
 		}
-		const filteredData: HealthData = {
-			...data,
-			metrics: filteredMetrics,
-		};
 
-		// Imperial conversion
-		const outputData = settings.unitSystem === "imperial"
-			? convertToImperial(filteredData)
-			: filteredData;
-
-		await writeToDailyNote(this.app, date, outputData, {
-			dailyNotePath: settings.dailyNotePath,
-			dailyNoteFormat: settings.dailyNoteFormat,
-			prefix: settings.usePrefix ? "ohs_" : "",
-			template: settings.dailyNoteTemplate,
-			writeTrainings: settings.writeTrainings,
-			writeWorkoutLocation: false, // No GPS in Shortcut MVP
-		});
-
-		return true;
+		return result;
 	}
 }
