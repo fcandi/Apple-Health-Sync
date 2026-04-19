@@ -93,6 +93,15 @@ export default class AppleHealthSyncPlugin extends Plugin {
 				dateToData = { [date]: single };
 			}
 
+			// Exclude today — partial data should not be written.
+			const todayLocal = (() => {
+				const n = new Date();
+				return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+			})();
+			for (const d of Object.keys(dateToData)) {
+				if (d >= todayLocal) delete dateToData[d];
+			}
+
 			const totalMetricKeys = payload.metrics ? Object.keys(payload.metrics).length : 0;
 			const syncDays = Object.keys(dateToData).sort();
 			console.debug("Apple Health Sync: parsed", syncDays.length, "days (" + syncDays.join(",") + "), totalMetricKeys:", totalMetricKeys);
@@ -125,7 +134,7 @@ export default class AppleHealthSyncPlugin extends Plugin {
 		}
 	}
 
-	/** Writes a debug file to the vault root after every sync run. Remove after debugging. */
+	/** Writes a sync debug file to _apple-health-sync/debug.md in the vault. */
 	private async writeDebugFile(
 		payload: { metrics?: Record<string, unknown> },
 		dateToData: Record<string, HealthData>,
@@ -135,39 +144,45 @@ export default class AppleHealthSyncPlugin extends Plugin {
 	): Promise<void> {
 		try {
 			const lines: string[] = [
-				`# Apple Health Sync — Debug ${new Date().toISOString()}`,
+				`# Apple Health Sync — Debug`,
+				`**Letzter Sync:** ${new Date().toLocaleString()}`,
 				``,
-				`## Sync-Ergebnis`,
-				`- Geschrieben: ${result.written}`,
-				`- Unverändert: ${result.unchanged}`,
-				`- Leer: ${result.empty}`,
-				`- Tage im Payload: ${syncDays.join(", ")}`,
+				`## Ergebnis`,
+				`| | |`,
+				`|---|---|`,
+				`| Geschrieben | ${result.written} |`,
+				`| Unverändert | ${result.unchanged} |`,
+				`| Leer (kein Wert) | ${result.empty} |`,
+				`| Tage im Payload | ${syncDays.length} |`,
 				``,
-				`## Steps pro Tag (nach Plugin-Parsing)`,
+				`## Metriken pro Tag`,
+				``,
 			];
+
 			for (const day of syncDays) {
-				const steps = dateToData[day]?.metrics["steps"];
-				lines.push(`- ${day}: ${steps ?? "null (kein Wert)"}`);
+				const metrics = dateToData[day]?.metrics ?? {};
+				lines.push(`### ${day}`);
+				if (Object.keys(metrics).length === 0) {
+					lines.push("*(keine Daten)*");
+				} else {
+					for (const [key, val] of Object.entries(metrics)) {
+						lines.push(`- **${key}:** ${val}`);
+					}
+				}
+				lines.push("");
 			}
 
-			lines.push(``, `## Rohe Steps-VD aus Shortcut-Payload`);
-			const rawSteps = payload.metrics?.["steps"];
-			if (rawSteps && typeof rawSteps === "object" && "v" in rawSteps && "d" in rawSteps) {
-				const vd = rawSteps as { v: unknown; d: unknown };
-				lines.push("```");
-				lines.push(`v: ${String(vd.v).substring(0, 300)}`);
-				lines.push(`d: ${String(vd.d).substring(0, 300)}`);
-				lines.push("```");
-			} else {
-				lines.push(`(keine Steps-VD gefunden im Payload)`);
-			}
-
-			lines.push(``, `## Rohe Payload (erste 600 Zeichen)`, "```");
-			lines.push(rawPayload.substring(0, 600));
+			lines.push(`## Roher Payload (erste 800 Zeichen)`, "```json");
+			lines.push(rawPayload.substring(0, 800));
 			lines.push("```");
 
 			const content = lines.join("\n");
-			const path = "apple-health-debug.md";
+			const folder = "_apple-health-sync";
+			const path = `${folder}/debug.md`;
+
+			if (!this.app.vault.getAbstractFileByPath(folder)) {
+				await this.app.vault.createFolder(folder);
+			}
 			const existing = this.app.vault.getAbstractFileByPath(path);
 			if (existing instanceof TFile) {
 				await this.app.vault.modify(existing, content);
