@@ -248,11 +248,17 @@ export function parseShortcutPayload(
 	if (payload.workouts_raw) {
 		const rawTypes = parseWorkoutsRawToTypes(payload.workouts_raw, targetDate);
 		if (rawTypes.length > 0) {
+			const isSingle = rawTypes.length === 1;
+			const durationMin = isSingle && typeof metrics["intensity_min"] === "number"
+				? Math.round(metrics["intensity_min"] as number) : null;
+
 			for (const rawType of rawTypes) {
 				const normalizedType = normalizeAppleWorkoutType(rawType);
 				const category = getActivityCategory(normalizedType);
-				activities[normalizedType] = "";
-				trainings.push({ type: normalizedType, category });
+				activities[normalizedType] = durationMin ? `${durationMin}min` : "";
+				const entry: TrainingEntry = { type: normalizedType, category };
+				if (durationMin) entry.duration_min = durationMin;
+				trainings.push(entry);
 			}
 		}
 	}
