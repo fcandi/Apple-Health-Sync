@@ -120,17 +120,20 @@ function parseStrList(raw: unknown): string[] {
 
 /**
  * Parst den Toolbox-Workout-Rohtext ("Hiking 2026-04-21 at 16:01\n...").
- * Gibt einen "·"-getrennten String der Workout-Typen für targetDate zurück.
+ * Gibt die einzigartigen Workout-Typ-Strings für targetDate zurück (in Reihenfolge).
  */
-function parseWorkoutsRaw(raw: unknown, targetDate: string): string | null {
-	if (typeof raw !== "string" || !raw.trim()) return null;
+function parseWorkoutsRawToTypes(raw: unknown, targetDate: string): string[] {
+	if (typeof raw !== "string" || !raw.trim()) return [];
 	const seen = new Set<string>();
 	for (const line of raw.split(/\n|\\n/)) {
 		const m = line.trim().match(/^(.+?) (\d{4}-\d{2}-\d{2}) at \d{2}:\d{2}/);
 		if (m && m[2] === targetDate) seen.add(m[1]!.trim());
 	}
-	return seen.size > 0 ? Array.from(seen).join(" \u00b7 ") : null;
+	return Array.from(seen);
 }
+
+/** Kategorien, für die distance_km sinnvoll ist (kein Gym, kein Racket etc.) */
+const DISTANCE_CATEGORIES = new Set(["outdoor", "running", "cycling", "walking", "swimming", "water", "winter"]);
 
 /**
  * v=2-Format: Werte und Datums als parallele Listen. Plugin pickt den Eintrag
@@ -242,10 +245,31 @@ export function parseShortcutPayload(
 		}
 	}
 
-	// Workout-Typen aus Toolbox-Rohtext (temporär — bis eigene App)
+	// Workouts aus Toolbox-Rohtext → activities + trainings (wie Garmin-Plugin)
+	// Temporär bis eigene App; single-workout-Tag bekommt duration+distance, multi-Tag nur Typ.
 	if (payload.workouts_raw) {
-		const wt = parseWorkoutsRaw(payload.workouts_raw, targetDate);
-		if (wt) metrics["workout_types"] = wt;
+		const rawTypes = parseWorkoutsRawToTypes(payload.workouts_raw, targetDate);
+		if (rawTypes.length > 0) {
+			const isSingle = rawTypes.length === 1;
+			const durationMin = isSingle && typeof metrics["intensity_min"] === "number"
+				? metrics["intensity_min"] as number : null;
+			const distKm = isSingle && typeof metrics["distance_km"] === "number"
+				? metrics["distance_km"] as number : null;
+
+			for (const rawType of rawTypes) {
+				const normalizedType = normalizeAppleWorkoutType(rawType);
+				const category = getActivityCategory(normalizedType);
+				const parts: string[] = [];
+				if (distKm && DISTANCE_CATEGORIES.has(category)) parts.push(`${round1(distKm)} km`);
+				if (durationMin) parts.push(`${Math.round(durationMin)}min`);
+				activities[normalizedType] = parts.join(" \u00b7 ");
+
+				const entry: TrainingEntry = { type: normalizedType, category };
+				if (distKm && DISTANCE_CATEGORIES.has(category)) entry.distance_km = round1(distKm);
+				if (durationMin) entry.duration_min = Math.round(durationMin);
+				trainings.push(entry);
+			}
+		}
 	}
 
 	if (Array.isArray(payload.workouts)) {

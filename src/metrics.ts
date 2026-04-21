@@ -8,7 +8,6 @@ export interface MetricDefinition {
 export const METRICS: MetricDefinition[] = [
 	// Standard (enabled by default)
 	{ key: "steps",           type: "number", category: "standard", defaultEnabled: true },
-	{ key: "workout_types",   type: "string", category: "standard", defaultEnabled: true },
 	{ key: "sleep_duration",  type: "string", category: "standard", defaultEnabled: true },
 	{ key: "resting_hr",      type: "number", category: "standard", defaultEnabled: true },
 	{ key: "hrv",             type: "number", category: "standard", defaultEnabled: true },
