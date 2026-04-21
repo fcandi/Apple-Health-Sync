@@ -74,7 +74,7 @@ export default class AppleHealthSyncPlugin extends Plugin {
 				.replace(/:,/g, ":null,")
 				.replace(/:}/g, ":null}");
 			console.debug("Apple Health Sync: cleaned data:", cleanedData.substring(0, 200));
-			const payload = JSON.parse(cleanedData) as { date?: string; metrics?: Record<string, unknown>; workouts?: unknown[] };
+			const payload = JSON.parse(cleanedData) as { date?: string; metrics?: Record<string, unknown>; workouts?: unknown[]; workouts_raw?: string };
 
 			if (!date && payload.date) {
 				date = payload.date;

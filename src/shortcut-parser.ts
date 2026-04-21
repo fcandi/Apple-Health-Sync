@@ -119,6 +119,20 @@ function parseStrList(raw: unknown): string[] {
 }
 
 /**
+ * Parst den Toolbox-Workout-Rohtext ("Hiking 2026-04-21 at 16:01\n...").
+ * Gibt einen "·"-getrennten String der Workout-Typen für targetDate zurück.
+ */
+function parseWorkoutsRaw(raw: unknown, targetDate: string): string | null {
+	if (typeof raw !== "string" || !raw.trim()) return null;
+	const seen = new Set<string>();
+	for (const line of raw.split(/\n|\\n/)) {
+		const m = line.trim().match(/^(.+?) (\d{4}-\d{2}-\d{2}) at \d{2}:\d{2}/);
+		if (m && m[2] === targetDate) seen.add(m[1]!.trim());
+	}
+	return seen.size > 0 ? Array.from(seen).join(" \u00b7 ") : null;
+}
+
+/**
  * v=2-Format: Werte und Datums als parallele Listen. Plugin pickt den Eintrag
  * passend zu targetDate. Mehrere Matches (Zeitzonenwechsel) → Summe bzw.
  * Durchschnitt je nach Metrik-Typ.
@@ -175,7 +189,7 @@ export function extractPayloadDates(
  * returns a map of date → HealthData.
  */
 export function parseShortcutPayloadMultiDay(
-	payload: { metrics?: Record<string, unknown>; workouts?: unknown[] },
+	payload: { metrics?: Record<string, unknown>; workouts?: unknown[]; workouts_raw?: unknown },
 	version: string
 ): Record<string, HealthData> {
 	const out: Record<string, HealthData> = {};
@@ -193,7 +207,7 @@ export function parseShortcutPayloadMultiDay(
  *        picks the entry matching targetDate
  */
 export function parseShortcutPayload(
-	payload: { metrics?: Record<string, unknown>; workouts?: unknown[] },
+	payload: { metrics?: Record<string, unknown>; workouts?: unknown[]; workouts_raw?: unknown },
 	_version: string,
 	targetDate: string
 ): HealthData {
@@ -226,6 +240,12 @@ export function parseShortcutPayload(
 		if (typeof metrics.body_fat_pct === "number" && metrics.body_fat_pct < 1) {
 			metrics.body_fat_pct = roundForKey("body_fat_pct", metrics.body_fat_pct * 100);
 		}
+	}
+
+	// Workout-Typen aus Toolbox-Rohtext (temporär — bis eigene App)
+	if (payload.workouts_raw) {
+		const wt = parseWorkoutsRaw(payload.workouts_raw, targetDate);
+		if (wt) metrics["workout_types"] = wt;
 	}
 
 	if (Array.isArray(payload.workouts)) {

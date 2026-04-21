@@ -184,6 +184,8 @@ def build_actions(days: int, cooldown: int) -> list:
     uuid_encode          = make_uuid()
     uuid_url             = make_uuid()
     uuid_state_text      = make_uuid()
+    uuid_workouts        = make_uuid()
+    uuid_workouts_text   = make_uuid()
 
     metric_uuids = {key: (make_uuid(), make_uuid()) for key, _ in METRICS}
 
@@ -312,6 +314,24 @@ def build_actions(days: int, cooldown: int) -> list:
         'WFWorkflowActionParameters': {'UUID': make_uuid()},
     })
 
+    # ── Workouts (Toolbox, letzte 20 — Text-Parsing-Approach) ────────────────
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '20',
+            'useDateRange': False,
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts_text,
+            'WFTextActionText': text_with_vars([(uuid_workouts, 'Workouts')]),
+        },
+    })
+
     # ── HealthKit Queries (pro Metrik: Find + Extract Start Date) ─────────────
     for key, display_name in METRICS:
         u_find, u_extract = metric_uuids[key]
@@ -330,7 +350,9 @@ def build_actions(days: int, cooldown: int) -> list:
         json_parts.append('","d":"')
         json_parts.append((u_extract, OUT_START_DATE, DATE_FMT))
         json_parts.append('"}')
-    json_parts.append('}}')
+    json_parts.append('},"workouts_raw":"')
+    json_parts.append((uuid_workouts_text, OUT_TEXT))
+    json_parts.append('"}')
 
     actions.append({
         'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
@@ -465,6 +487,254 @@ def build_debug_workout_actions() -> list:
     return actions
 
 
+def build_debug_workout2_actions() -> list:
+    """Debug v2: Versucht Workout-Properties via properties.health.workout zu extrahieren.
+    Output zeigt ob/welche Properties das Toolbox-Objekt freigibt."""
+    actions = []
+
+    uuid_workouts  = make_uuid()
+    uuid_text      = make_uuid()
+    uuid_duration  = make_uuid()
+    uuid_distance  = make_uuid()
+    uuid_calories  = make_uuid()
+    uuid_startdate = make_uuid()
+    uuid_enddate   = make_uuid()
+    uuid_combined  = make_uuid()
+    uuid_encoded   = make_uuid()
+    uuid_url       = make_uuid()
+
+    # 1. Toolbox: 3 Workouts
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '3',
+            'useDateRange': False,
+        },
+    })
+
+    # 2. Bekannte Text-Baseline
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_text,
+            'WFTextActionText': text_with_vars([(uuid_workouts, 'Workouts')]),
+        },
+    })
+
+    # 3–7. Property-Extraktion — Identifier/OutputNames sind Kandidaten; leer = falsch geraten
+    PROP_ACTIONS = [
+        (uuid_duration,  'Duration',               'Dauer'),
+        (uuid_distance,  'Distance',               'Distanz'),
+        (uuid_calories,  'Active Energy Burned',   'Verbrannte aktive Energie'),
+        (uuid_startdate, 'Start Date',             'Startdatum'),
+        (uuid_enddate,   'End Date',               'Enddatum'),
+    ]
+    for prop_uuid, prop_name, _ in PROP_ACTIONS:
+        actions.append({
+            'WFWorkflowActionIdentifier': 'is.workflow.actions.properties.health.workout',
+            'WFWorkflowActionParameters': {
+                'UUID': prop_uuid,
+                'WFContentItemPropertyName': prop_name,
+                'WFInput': param_ref(uuid_workouts, 'Workouts'),
+            },
+        })
+
+    # 8. Alles kombinieren — OutputNames auf DE geraten (leere Sektion = falscher Name)
+    combined_parts = ['=TEXT=\n', (uuid_text, OUT_TEXT)]
+    for prop_uuid, _, out_name_de in PROP_ACTIONS:
+        combined_parts.append(f'\n={out_name_de.upper()}=\n')
+        combined_parts.append((prop_uuid, out_name_de))
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_combined,
+            'WFTextActionText': text_with_vars(combined_parts),
+        },
+    })
+
+    # 9. URL-Encode
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_combined, OUT_TEXT),
+        },
+    })
+
+    # 10. Obsidian-URL
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?workout_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+
+    # 11. URL öffnen
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
+
+    return actions
+
+
+def build_debug_workout3_actions() -> list:
+    """Debug v3: Zwei parallele Ansätze.
+    Ansatz A: is.workflow.actions.properties.workout (ohne .health — andere Hypothese).
+    Ansatz B: Repeat-Loop, jedes Item als Text — sehen was Repeat Item liefert."""
+    actions = []
+
+    uuid_workouts   = make_uuid()
+    uuid_text       = make_uuid()   # Baseline
+    # Ansatz A: properties.workout
+    uuid_dur_a      = make_uuid()
+    uuid_dist_a     = make_uuid()
+    uuid_cal_a      = make_uuid()
+    uuid_start_a    = make_uuid()
+    # Ansatz B: Repeat-Loop
+    uuid_repeat     = make_uuid()
+    uuid_item_text  = make_uuid()
+    uuid_list_var   = make_uuid()   # Variable die im Loop befüllt wird
+    uuid_repeat_end = make_uuid()
+    uuid_combined   = make_uuid()
+    uuid_encoded    = make_uuid()
+    uuid_url        = make_uuid()
+
+    # 1. Toolbox: 3 Workouts
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '3',
+            'useDateRange': False,
+        },
+    })
+
+    # 2. Baseline Text
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_text,
+            'WFTextActionText': text_with_vars([(uuid_workouts, 'Workouts')]),
+        },
+    })
+
+    # ── Ansatz A: properties.workout (ohne .health) ───────────────────────────
+    for prop_uuid, prop_name in [
+        (uuid_dur_a,   'Duration'),
+        (uuid_dist_a,  'Distance'),
+        (uuid_cal_a,   'Active Energy Burned'),
+        (uuid_start_a, 'Start Date'),
+    ]:
+        actions.append({
+            'WFWorkflowActionIdentifier': 'is.workflow.actions.properties.workout',
+            'WFWorkflowActionParameters': {
+                'UUID': prop_uuid,
+                'WFContentItemPropertyName': prop_name,
+                'WFInput': param_ref(uuid_workouts, 'Workouts'),
+            },
+        })
+
+    # ── Ansatz B: Repeat-Loop, Repeat Item als Text ───────────────────────────
+    # Repeat Item OutputName auf DE: 'Repeat-Element' (häufigste Variante)
+    REPEAT_ITEM_OUT = 'Repeat-Element'
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.repeat.each',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_repeat,
+            'WFInput': {
+                'Type': 'Variable',
+                'Variable': param_ref(uuid_workouts, 'Workouts'),
+            },
+            'WFControlFlowMode': 0,
+        },
+    })
+
+    # Text des aktuellen Repeat Items
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_item_text,
+            'WFTextActionText': text_with_vars([(uuid_repeat, REPEAT_ITEM_OUT)]),
+        },
+    })
+
+    # Zur Liste hinzufügen
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.appendvariable',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_item_text, OUT_TEXT),
+            'WFVariableName': 'LoopItems',
+        },
+    })
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.repeat.each',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_repeat_end,
+            'GroupingIdentifier': uuid_repeat,
+            'WFControlFlowMode': 2,
+        },
+    })
+
+    # ── Alles kombinieren ─────────────────────────────────────────────────────
+    # Ansatz A OutputNames geraten (DE); leer = falsch geraten oder Action unbekannt
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_combined,
+            'WFTextActionText': text_with_vars([
+                '=BASELINE=\n', (uuid_text, OUT_TEXT),
+                '\n\n=A:DURATION=\n', (uuid_dur_a, 'Dauer'),
+                '\n=A:DISTANCE=\n', (uuid_dist_a, 'Distanz'),
+                '\n=A:CALORIES=\n', (uuid_cal_a, 'Verbrannte aktive Energie'),
+                '\n=A:START=\n', (uuid_start_a, 'Startdatum'),
+                '\n\n=B:LOOP_ITEMS=\n',
+                (uuid_list_var, 'LoopItems'),
+            ]),
+        },
+    })
+
+    # URL-Encode + öffnen
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_combined, OUT_TEXT),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?workout_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
+
+    return actions
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Apple Health Sync iOS Shortcut Generator'
@@ -482,13 +752,18 @@ def main():
         help='Output-Dateiname'
     )
     parser.add_argument(
-        '--mode', default='standard', choices=['standard', 'debug-workouts'],
-        help='Shortcut-Modus: standard = normaler Sync; debug-workouts = Toolbox-Rohdaten-Test'
+        '--mode', default='standard',
+        choices=['standard', 'debug-workouts', 'debug-workouts2', 'debug-workouts3'],
+        help='Shortcut-Modus'
     )
     args = parser.parse_args()
 
     if args.mode == 'debug-workouts':
         actions = build_debug_workout_actions()
+    elif args.mode == 'debug-workouts2':
+        actions = build_debug_workout2_actions()
+    elif args.mode == 'debug-workouts3':
+        actions = build_debug_workout3_actions()
     else:
         actions = build_actions(args.days, args.cooldown)
 
@@ -515,8 +790,8 @@ def main():
     with open(args.output, 'wb') as f:
         plistlib.dump(shortcut, f, fmt=plistlib.FMT_BINARY)
 
-    if args.mode == 'debug-workouts':
-        print(f'Generiert: {args.output} — {len(actions)} Aktionen, Modus: debug-workouts (Toolbox, 5 Workouts)')
+    if args.mode != 'standard':
+        print(f'Generiert: {args.output} — {len(actions)} Aktionen, Modus: {args.mode}')
     else:
         cooldown_desc = f'{args.cooldown}min Cooldown' if args.cooldown > 0 else 'kein Cooldown'
         print(
