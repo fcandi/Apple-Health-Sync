@@ -132,8 +132,6 @@ function parseWorkoutsRawToTypes(raw: unknown, targetDate: string): string[] {
 	return Array.from(seen);
 }
 
-/** Kategorien, für die distance_km sinnvoll ist (kein Gym, kein Racket etc.) */
-const DISTANCE_CATEGORIES = new Set(["outdoor", "running", "cycling", "walking", "swimming", "water", "winter"]);
 
 /**
  * v=2-Format: Werte und Datums als parallele Listen. Plugin pickt den Eintrag
@@ -250,24 +248,11 @@ export function parseShortcutPayload(
 	if (payload.workouts_raw) {
 		const rawTypes = parseWorkoutsRawToTypes(payload.workouts_raw, targetDate);
 		if (rawTypes.length > 0) {
-			const isSingle = rawTypes.length === 1;
-			const durationMin = isSingle && typeof metrics["intensity_min"] === "number"
-				? metrics["intensity_min"] as number : null;
-			const distKm = isSingle && typeof metrics["distance_km"] === "number"
-				? metrics["distance_km"] as number : null;
-
 			for (const rawType of rawTypes) {
 				const normalizedType = normalizeAppleWorkoutType(rawType);
 				const category = getActivityCategory(normalizedType);
-				const parts: string[] = [];
-				if (distKm && DISTANCE_CATEGORIES.has(category)) parts.push(`${round1(distKm)} km`);
-				if (durationMin) parts.push(`${Math.round(durationMin)}min`);
-				activities[normalizedType] = parts.join(" \u00b7 ");
-
-				const entry: TrainingEntry = { type: normalizedType, category };
-				if (distKm && DISTANCE_CATEGORIES.has(category)) entry.distance_km = round1(distKm);
-				if (durationMin) entry.duration_min = Math.round(durationMin);
-				trainings.push(entry);
+				activities[normalizedType] = "";
+				trainings.push({ type: normalizedType, category });
 			}
 		}
 	}
