@@ -212,7 +212,8 @@ def build_actions(days: int, cooldown: int) -> list:
             },
         })
 
-        # 3. Get State-File aus iCloud Drive
+        # 3. Get State-File aus iCloud Drive (Shortcuts-Ordner).
+        #    WFGetFilePath = Dateiname relativ zum iCloud-Shortcuts-Ordner.
         #    WFFileErrorIfNotFound: False → kein Fehler wenn nicht vorhanden.
         #    Fallback für Nutzer ohne iCloud: Output ist leer → "contains T" = false
         #    → Pre-Check-Block wird übersprungen → Shortcut läuft normal.
@@ -220,11 +221,9 @@ def build_actions(days: int, cooldown: int) -> list:
             'WFWorkflowActionIdentifier': 'is.workflow.actions.file',
             'WFWorkflowActionParameters': {
                 'UUID': uuid_state_read,
-                'WFFile': {
-                    'fileLocation': {
-                        'WFFileLocationType': 'iCloud',
-                        'relativeSubpath': STATE_FILENAME,
-                    },
+                'WFGetFilePath': {
+                    'Value': {'string': STATE_FILENAME},
+                    'WFSerializationType': 'WFTextTokenString',
                 },
                 'WFFileErrorIfNotFound': False,
             },
@@ -392,13 +391,76 @@ def build_actions(days: int, cooldown: int) -> list:
                 'UUID': make_uuid(),
                 'WFInput': param_ref_as_text(uuid_state_text, OUT_TEXT),
                 'WFSaveFileShouldOverwrite': True,
-                'WFAskWhereToSave': False,
+                'WFSaveFileShowDocumentPicker': False,
                 'WFFileDestinationPath': {
                     'Value': {'string': STATE_FILENAME},
                     'WFSerializationType': 'WFTextTokenString',
                 },
             },
         })
+
+    return actions
+
+
+def build_debug_workout_actions() -> list:
+    """Minimalster Debug-Shortcut: Toolbox GetWorkoutsIntent → raw Text → Obsidian.
+    Ziel: herausfinden welche Felder/Format das Toolbox-Workout-Objekt hat."""
+    actions = []
+
+    uuid_workouts = make_uuid()
+    uuid_raw      = make_uuid()
+    uuid_encoded  = make_uuid()
+    uuid_url      = make_uuid()
+
+    # 1. Toolbox: letzte 5 Workouts holen (Limit klein → URL bleibt handhabbar)
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '5',
+            'useDateRange': False,
+        },
+    })
+
+    # 2. Als Text — iOS serialisiert die Workout-Objekte in ihre String-Darstellung
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_raw,
+            'WFTextActionText': text_with_vars([(uuid_workouts, 'Workouts')]),
+        },
+    })
+
+    # 3. URL-Encode
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_raw, OUT_TEXT),
+        },
+    })
+
+    # 4. Obsidian-URL mit workout_debug-Parameter
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?workout_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+
+    # 5. URL öffnen → Obsidian-Plugin empfängt und speichert
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
 
     return actions
 
@@ -419,9 +481,16 @@ def main():
         '-o', '--output', default='Apple-Health-Sync.unsigned.shortcut',
         help='Output-Dateiname'
     )
+    parser.add_argument(
+        '--mode', default='standard', choices=['standard', 'debug-workouts'],
+        help='Shortcut-Modus: standard = normaler Sync; debug-workouts = Toolbox-Rohdaten-Test'
+    )
     args = parser.parse_args()
 
-    actions = build_actions(args.days, args.cooldown)
+    if args.mode == 'debug-workouts':
+        actions = build_debug_workout_actions()
+    else:
+        actions = build_actions(args.days, args.cooldown)
 
     shortcut = {
         'WFWorkflowMinimumClientVersionString': '900',
@@ -446,12 +515,15 @@ def main():
     with open(args.output, 'wb') as f:
         plistlib.dump(shortcut, f, fmt=plistlib.FMT_BINARY)
 
-    cooldown_desc = f'{args.cooldown}min Cooldown' if args.cooldown > 0 else 'kein Cooldown'
-    print(
-        f'Generiert: {args.output} — '
-        f'{len(actions)} Aktionen, {len(METRICS)} Metriken, '
-        f'{args.days} Tage, {cooldown_desc}'
-    )
+    if args.mode == 'debug-workouts':
+        print(f'Generiert: {args.output} — {len(actions)} Aktionen, Modus: debug-workouts (Toolbox, 5 Workouts)')
+    else:
+        cooldown_desc = f'{args.cooldown}min Cooldown' if args.cooldown > 0 else 'kein Cooldown'
+        print(
+            f'Generiert: {args.output} — '
+            f'{len(actions)} Aktionen, {len(METRICS)} Metriken, '
+            f'{args.days} Tage, {cooldown_desc}'
+        )
 
 
 if __name__ == '__main__':

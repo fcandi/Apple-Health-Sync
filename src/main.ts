@@ -35,6 +35,13 @@ export default class AppleHealthSyncPlugin extends Plugin {
 	}
 
 	private async handleHealthSyncUri(params: Record<string, string>) {
+		// Debug-Modus: raw Workout-Daten vom Toolbox-Test-Shortcut entgegennehmen
+		if (params.workout_debug !== undefined) {
+			await this.writeWorkoutDebugFile(params.workout_debug);
+			new Notice("Apple Health Sync: Workout-Debug gespeichert → _apple-health-sync/workout-debug-raw.md");
+			return;
+		}
+
 		const { data, v } = params;
 		let { date } = params;
 
@@ -132,6 +139,32 @@ export default class AppleHealthSyncPlugin extends Plugin {
 		} catch (error) {
 			console.error("Apple Health Sync: URI handler error", error);
 			new Notice(t("noticeSyncError", this.settings.language));
+		}
+	}
+
+	/** Schreibt den rohen Toolbox-Output in workout-debug-raw.md für manuelle Analyse. */
+	private async writeWorkoutDebugFile(raw: string): Promise<void> {
+		const lines = [
+			`# Workout Debug — Raw Output`,
+			`**Empfangen:** ${new Date().toLocaleString()}`,
+			`**Länge:** ${raw.length} Zeichen`,
+			``,
+			`## Rohtext (iOS String-Darstellung der Workout-Objekte)`,
+			``,
+			"```",
+			raw,
+			"```",
+		];
+		const folder = "_apple-health-sync";
+		const path = `${folder}/workout-debug-raw.md`;
+		if (!this.app.vault.getAbstractFileByPath(folder)) {
+			await this.app.vault.createFolder(folder);
+		}
+		const existing = this.app.vault.getAbstractFileByPath(path);
+		if (existing instanceof TFile) {
+			await this.app.vault.modify(existing, lines.join("\n"));
+		} else {
+			await this.app.vault.create(path, lines.join("\n"));
 		}
 	}
 
