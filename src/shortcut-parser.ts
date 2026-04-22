@@ -114,9 +114,12 @@ function parseStrList(raw: unknown): string[] {
 		.map(normalizeDate);
 }
 
-/** iOS serialisiert Zahlen mit DE-Locale ("63,2") — `,` zu `.` vor parseFloat. */
-function parseLocaleNum(s: string): number {
-	return parseFloat(s.trim().replace(",", "."));
+/** iOS serialisiert Zahlen mit DE-Locale ("63,2", "4,84 km") — `,` zu `.` vor parseFloat.
+ * parseFloat stoppt an Einheit-Suffixen (" km", " kcal") automatisch. */
+function parseLocaleNum(s: string | undefined, fallback = NaN): number {
+	if (!s) return fallback;
+	const n = parseFloat(s.trim().replace(",", "."));
+	return Number.isFinite(n) ? n : fallback;
 }
 
 /** Eine Zeile pro Workout (parallele Listen via Toolbox Property-Aggrandizement). */
@@ -132,6 +135,8 @@ type ParsedWorkoutSource = {
 	calories?: unknown;
 	startTime?: unknown;
 };
+
+type WorkoutGroup = { count: number; distanceKm: number; durationMin: number; calories: number };
 
 
 /**
@@ -245,36 +250,53 @@ export function parseShortcutPayload(
 	}
 
 	// Workouts — parallele Property-Listen von Toolbox GetWorkoutsIntent.
-	// Pro Workout: type, duration (min), startTime. Distance/Calories aktuell
-	// nicht in activities geschrieben (kommt mit eigener App strukturiert rein).
+	// Format identisch zum Garmin-Plugin: "4.7 km · 97min · 315 kcal" (outdoor)
+	// bzw. "30min · 155 kcal" (gym). Ø bpm nicht, weil Toolbox keine HR liefert.
 	if (payload.workouts) {
 		const w = payload.workouts as ParsedWorkoutSource;
 		const types = splitWorkoutList(w.type);
 		const durations = splitWorkoutList(w.duration);
+		const distances = splitWorkoutList(w.distance);
+		const cals = splitWorkoutList(w.calories);
 		const starts = splitWorkoutList(w.startTime);
 		const n = Math.min(types.length, durations.length, starts.length);
 
-		const dayTypeToDuration = new Map<string, number>();
+		const grouped = new Map<string, WorkoutGroup>();
 		for (let i = 0; i < n; i++) {
 			const t = types[i]!;
 			const startDate = normalizeDate(starts[i]!);
 			if (!t || startDate !== targetDate) continue;
-			const durMin = parseLocaleNum(durations[i]!);
-			if (!Number.isFinite(durMin)) continue;
+
+			const durMin = parseLocaleNum(durations[i]);
+			if (!Number.isFinite(durMin) || durMin <= 0) continue;
+
+			const distKm = parseLocaleNum(distances[i], 0);
+			const cal = parseLocaleNum(cals[i], 0);
+
 			const normalizedType = normalizeAppleWorkoutType(t);
-			// Mehrere Workouts gleichen Typs am selben Tag → Dauern aufsummieren
-			dayTypeToDuration.set(
-				normalizedType,
-				(dayTypeToDuration.get(normalizedType) ?? 0) + durMin
-			);
+			const g = grouped.get(normalizedType)
+				?? { count: 0, distanceKm: 0, durationMin: 0, calories: 0 };
+			g.count += 1;
+			g.durationMin += durMin;
+			g.distanceKm += distKm;
+			g.calories += cal;
+			grouped.set(normalizedType, g);
 		}
 
-		for (const [normalizedType, durMin] of dayTypeToDuration) {
-			const rounded = Math.round(durMin);
+		for (const [normalizedType, data] of grouped) {
+			const parts: string[] = [];
+			if (data.count > 1) parts.push(`${data.count}x`);
+			if (data.distanceKm > 0) parts.push(`${Math.round(data.distanceKm * 10) / 10} km`);
+			if (data.durationMin > 0) parts.push(`${Math.round(data.durationMin)}min`);
+			if (data.calories > 0) parts.push(`${Math.round(data.calories)} kcal`);
+
+			activities[normalizedType] = parts.join(" \u00b7 ");
+
 			const category = getActivityCategory(normalizedType);
-			activities[normalizedType] = rounded > 0 ? `${rounded}min` : "";
 			const entry: TrainingEntry = { type: normalizedType, category };
-			if (rounded > 0) entry.duration_min = rounded;
+			if (data.distanceKm > 0) entry.distance_km = Math.round(data.distanceKm * 10) / 10;
+			if (data.durationMin > 0) entry.duration_min = Math.round(data.durationMin);
+			if (data.calories > 0) entry.calories = Math.round(data.calories);
 			trainings.push(entry);
 		}
 	}
