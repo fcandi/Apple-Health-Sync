@@ -138,6 +138,47 @@ type ParsedWorkoutSource = {
 
 type WorkoutGroup = { count: number; distanceKm: number; durationMin: number; calories: number };
 
+type SleepSource = {
+	start?: unknown;
+	end?: unknown;
+	duration?: unknown;
+	value?: unknown;
+};
+
+/** iOS-Sleep-Stage (DE/EN) → Plugin-Metrik-Key. InBed wird ignoriert. */
+const SLEEP_STAGE_MAP: Record<string, string> = {
+	tief: "sleep_deep",
+	kern: "sleep_light",
+	rem: "sleep_rem",
+	wach: "sleep_awake",
+	deep: "sleep_deep",
+	core: "sleep_light",
+	awake: "sleep_awake",
+	"im bett": "",
+	"in bed": "",
+};
+
+/** Parst iOS-Duration: "30" (Sekunden), "4:31" (MM:SS), "1:23:45" (H:MM:SS). */
+function parseDurationToSeconds(s: string): number {
+	const t = s.trim();
+	if (!t) return 0;
+	const parts = t.split(":").map((p) => parseInt(p, 10));
+	if (parts.some((n) => !Number.isFinite(n))) return 0;
+	if (parts.length === 1) return parts[0]!;
+	if (parts.length === 2) return parts[0]! * 60 + parts[1]!;
+	if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
+	return 0;
+}
+
+/** Sekunden → "Xh Ymin" (bzw. "Ymin" wenn <1h). Leer wenn 0. */
+function secondsToHoursMin(seconds: number): string {
+	if (seconds <= 0) return "";
+	const h = Math.floor(seconds / 3600);
+	const m = Math.round((seconds % 3600) / 60);
+	if (h === 0) return `${m}min`;
+	return `${h}h ${m}min`;
+}
+
 
 /**
  * v=2-Format: Werte und Datums als parallele Listen. Plugin pickt den Eintrag
@@ -179,13 +220,22 @@ function resolveVD(pair: VDPair, key: string, targetDate: string): number | null
  * multi-day variant to iterate over every day the shortcut returned.
  */
 export function extractPayloadDates(
-	payload: { metrics?: Record<string, unknown> }
+	payload: { metrics?: Record<string, unknown>; sleep?: unknown }
 ): string[] {
 	const dates = new Set<string>();
-	if (!payload.metrics) return [];
-	for (const value of Object.values(payload.metrics)) {
-		if (isVDPair(value)) {
-			for (const d of parseStrList(value.d)) dates.add(d);
+	if (payload.metrics) {
+		for (const value of Object.values(payload.metrics)) {
+			if (isVDPair(value)) {
+				for (const d of parseStrList(value.d)) dates.add(d);
+			}
+		}
+	}
+	// Sleep-Wake-up-Dates einbeziehen — falls Schlaf-Nacht auf Tag ohne Metriken fällt
+	if (payload.sleep) {
+		const s = payload.sleep as SleepSource;
+		for (const end of splitWorkoutList(s.end)) {
+			const d = normalizeDate(end);
+			if (/^\d{4}-\d{2}-\d{2}$/.test(d)) dates.add(d);
 		}
 	}
 	return Array.from(dates).sort();
@@ -196,7 +246,7 @@ export function extractPayloadDates(
  * returns a map of date → HealthData.
  */
 export function parseShortcutPayloadMultiDay(
-	payload: { metrics?: Record<string, unknown>; workouts?: unknown },
+	payload: { metrics?: Record<string, unknown>; workouts?: unknown; sleep?: unknown },
 	version: string
 ): Record<string, HealthData> {
 	const out: Record<string, HealthData> = {};
@@ -214,7 +264,7 @@ export function parseShortcutPayloadMultiDay(
  *        picks the entry matching targetDate
  */
 export function parseShortcutPayload(
-	payload: { metrics?: Record<string, unknown>; workouts?: unknown },
+	payload: { metrics?: Record<string, unknown>; workouts?: unknown; sleep?: unknown },
 	_version: string,
 	targetDate: string
 ): HealthData {
@@ -301,6 +351,44 @@ export function parseShortcutPayload(
 		}
 	}
 
+	// Sleep — Segmente werden per End-Date (Wake-up) dem Ziel-Tag zugeordnet.
+	// sleep_duration = Summe aus Deep + Kern/Light + REM (ohne Wach, ohne InBed).
+	if (payload.sleep) {
+		const s = payload.sleep as SleepSource;
+		const ends = splitWorkoutList(s.end);
+		const durations = splitWorkoutList(s.duration);
+		const values = splitWorkoutList(s.value);
+		const n = Math.min(ends.length, durations.length, values.length);
+
+		const stageSec: Record<string, number> = {
+			sleep_deep: 0, sleep_light: 0, sleep_rem: 0, sleep_awake: 0,
+		};
+		let any = false;
+		for (let i = 0; i < n; i++) {
+			const wakeDate = normalizeDate(ends[i]!);
+			if (wakeDate !== targetDate) continue;
+			const stageKey = SLEEP_STAGE_MAP[values[i]!.trim().toLowerCase()];
+			if (!stageKey) continue;
+			const sec = parseDurationToSeconds(durations[i]!);
+			if (sec <= 0) continue;
+			stageSec[stageKey]! += sec;
+			any = true;
+		}
+
+		if (any) {
+			const total = stageSec.sleep_deep! + stageSec.sleep_light! + stageSec.sleep_rem!;
+			const fmt: Record<string, string> = {
+				sleep_duration: secondsToHoursMin(total),
+				sleep_deep:     secondsToHoursMin(stageSec.sleep_deep!),
+				sleep_light:    secondsToHoursMin(stageSec.sleep_light!),
+				sleep_rem:      secondsToHoursMin(stageSec.sleep_rem!),
+				sleep_awake:    secondsToHoursMin(stageSec.sleep_awake!),
+			};
+			for (const [k, v] of Object.entries(fmt)) {
+				if (v) metrics[k] = v;
+			}
+		}
+	}
 
 	return { metrics, activities, trainings };
 }

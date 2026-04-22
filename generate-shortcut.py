@@ -182,6 +182,48 @@ def health_find(action_uuid, display_name, days):
     }
 
 
+def sleep_filter(action_uuid, days):
+    """Filter Sleep-Samples der letzten N Tage (einzelne Stage-Segmente)."""
+    return {
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.filter.health.quantity',
+        'WFWorkflowActionParameters': {
+            'UUID': action_uuid,
+            'WFContentItemFilter': {
+                'Value': {
+                    'WFActionParameterFilterPrefix': 1,
+                    'WFContentPredicateBoundedDate': False,
+                    'WFActionParameterFilterTemplates': [
+                        {
+                            'Bounded': True, 'Operator': 4, 'Removable': False,
+                            'Property': 'Type',
+                            'Values': {'Enumeration': {'Value': 'Sleep',
+                                                       'WFSerializationType': 'WFStringSubstitutableState'}},
+                        },
+                        {
+                            'Bounded': True, 'Operator': 1001, 'Removable': False,
+                            'Property': 'Start Date',
+                            'Values': {'Unit': 16, 'Number': str(days)},
+                        },
+                    ],
+                },
+                'WFSerializationType': 'WFContentPredicateTableTemplate',
+            },
+        },
+    }
+
+
+def extract_sample_property(action_uuid, input_uuid, prop_name):
+    """Extrahiert eine Property aus einer HealthKit-Sample-Liste."""
+    return {
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.properties.health.quantity',
+        'WFWorkflowActionParameters': {
+            'UUID': action_uuid,
+            'WFContentItemPropertyName': prop_name,
+            'WFInput': param_ref(input_uuid, OUT_HEALTH),
+        },
+    }
+
+
 def extract_start_date(action_uuid, health_uuid):
     return {
         'WFWorkflowActionIdentifier': 'is.workflow.actions.properties.health.quantity',
@@ -208,6 +250,11 @@ def build_actions(days: int, cooldown: int) -> list:
     uuid_url             = make_uuid()
     uuid_state_text      = make_uuid()
     uuid_workouts        = make_uuid()
+    uuid_sleep           = make_uuid()
+    uuid_sleep_start     = make_uuid()
+    uuid_sleep_end       = make_uuid()
+    uuid_sleep_dur       = make_uuid()
+    uuid_sleep_val       = make_uuid()
 
     metric_uuids = {key: (make_uuid(), make_uuid()) for key, _ in METRICS}
 
@@ -347,6 +394,13 @@ def build_actions(days: int, cooldown: int) -> list:
         },
     })
 
+    # ── Sleep (einzelne Stage-Segmente) ──────────────────────────────────────
+    actions.append(sleep_filter(uuid_sleep, days))
+    actions.append(extract_sample_property(uuid_sleep_start, uuid_sleep, 'Start Date'))
+    actions.append(extract_sample_property(uuid_sleep_end,   uuid_sleep, 'End Date'))
+    actions.append(extract_sample_property(uuid_sleep_dur,   uuid_sleep, 'Duration'))
+    actions.append(extract_sample_property(uuid_sleep_val,   uuid_sleep, 'Value'))
+
     # ── HealthKit Queries (pro Metrik: Find + Extract Start Date) ─────────────
     for key, display_name in METRICS:
         u_find, u_extract = metric_uuids[key]
@@ -365,8 +419,17 @@ def build_actions(days: int, cooldown: int) -> list:
         json_parts.append('","d":"')
         json_parts.append((u_extract, OUT_START_DATE, DATE_FMT))
         json_parts.append('"}')
+    # Sleep — 4 parallele Listen pro Segment
+    json_parts.append('},"sleep":{"start":"')
+    json_parts.append((uuid_sleep_start, 'Startdatum'))
+    json_parts.append('","end":"')
+    json_parts.append((uuid_sleep_end, 'Enddatum'))
+    json_parts.append('","duration":"')
+    json_parts.append((uuid_sleep_dur, 'Dauer'))
+    json_parts.append('","value":"')
+    json_parts.append((uuid_sleep_val, 'Wert'))
     # Workouts — parallele Listen pro Property (iOS join'd mit Newlines bei list → text coercion)
-    json_parts.append('},"workouts":{"type":"')
+    json_parts.append('"},"workouts":{"type":"')
     json_parts.append((uuid_workouts, 'Workouts', 'workoutActivityType', 'PROPERTY'))
     json_parts.append('","duration":"')
     json_parts.append((uuid_workouts, 'Workouts', 'duration', 'PROPERTY'))
