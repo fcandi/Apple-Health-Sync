@@ -65,8 +65,26 @@ def date_aggrandizement(fmt):
     }
 
 
+def property_aggrandizement_ref(action_uuid, output_name, prop_name):
+    """Referenziert eine Variable mit WFPropertyVariableAggrandizement.
+    WICHTIG: Der Key heißt 'PropertyName', nicht 'WFPropertyName'.
+    Property-Namen sind interne camelCase-Identifier (z.B. 'duration'), nicht UI-Labels."""
+    return {
+        'OutputUUID': action_uuid,
+        'Type': 'ActionOutput',
+        'OutputName': output_name,
+        'Aggrandizements': [{
+            'Type': 'WFPropertyVariableAggrandizement',
+            'PropertyName': prop_name,
+        }],
+    }
+
+
 def text_with_vars(text_parts):
-    """Build WFTextTokenString aus str + (uuid, output_name[, fmt]) Tupeln."""
+    """Build WFTextTokenString aus Tupeln:
+      (uuid, output_name)                       → einfache Variable
+      (uuid, output_name, fmt)                  → Datumsformat-Aggrandizement
+      (uuid, output_name, prop, 'PROPERTY')     → Property-Aggrandizement"""
     result_text = ''
     attachments = {}
     for part in text_parts:
@@ -76,7 +94,12 @@ def text_with_vars(text_parts):
             pos = len(result_text)
             result_text += '\ufffc'
             range_key = '{' + str(pos) + ', 1}'
-            if len(part) == 3:
+            if len(part) == 4 and part[3] == 'PROPERTY':
+                action_uuid, output_name, prop_name, _ = part
+                attachments[range_key] = property_aggrandizement_ref(
+                    action_uuid, output_name, prop_name
+                )
+            elif len(part) == 3:
                 action_uuid, output_name, fmt = part
                 ref = action_output_ref(action_uuid, output_name)
                 ref['Aggrandizements'] = [date_aggrandizement(fmt)]
@@ -185,7 +208,6 @@ def build_actions(days: int, cooldown: int) -> list:
     uuid_url             = make_uuid()
     uuid_state_text      = make_uuid()
     uuid_workouts        = make_uuid()
-    uuid_workouts_text   = make_uuid()
 
     metric_uuids = {key: (make_uuid(), make_uuid()) for key, _ in METRICS}
 
@@ -314,7 +336,7 @@ def build_actions(days: int, cooldown: int) -> list:
         'WFWorkflowActionParameters': {'UUID': make_uuid()},
     })
 
-    # ── Workouts (Toolbox, letzte 20 — Text-Parsing-Approach) ────────────────
+    # ── Workouts (Toolbox, letzte 20) — Properties via Aggrandizement ────────
     actions.append({
         'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
         'WFWorkflowActionParameters': {
@@ -322,13 +344,6 @@ def build_actions(days: int, cooldown: int) -> list:
             'workoutType': 'All',
             'limit': '20',
             'useDateRange': False,
-        },
-    })
-    actions.append({
-        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
-        'WFWorkflowActionParameters': {
-            'UUID': uuid_workouts_text,
-            'WFTextActionText': text_with_vars([(uuid_workouts, 'Workouts')]),
         },
     })
 
@@ -350,9 +365,18 @@ def build_actions(days: int, cooldown: int) -> list:
         json_parts.append('","d":"')
         json_parts.append((u_extract, OUT_START_DATE, DATE_FMT))
         json_parts.append('"}')
-    json_parts.append('},"workouts_raw":"')
-    json_parts.append((uuid_workouts_text, OUT_TEXT))
-    json_parts.append('"}')
+    # Workouts — parallele Listen pro Property (iOS join'd mit Newlines bei list → text coercion)
+    json_parts.append('},"workouts":{"type":"')
+    json_parts.append((uuid_workouts, 'Workouts', 'workoutActivityType', 'PROPERTY'))
+    json_parts.append('","duration":"')
+    json_parts.append((uuid_workouts, 'Workouts', 'duration', 'PROPERTY'))
+    json_parts.append('","distance":"')
+    json_parts.append((uuid_workouts, 'Workouts', 'totalDistance', 'PROPERTY'))
+    json_parts.append('","calories":"')
+    json_parts.append((uuid_workouts, 'Workouts', 'totalEnergyBurned', 'PROPERTY'))
+    json_parts.append('","startTime":"')
+    json_parts.append((uuid_workouts, 'Workouts', 'startTime', 'PROPERTY'))
+    json_parts.append('"}}')
 
     actions.append({
         'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
@@ -735,6 +759,388 @@ def build_debug_workout3_actions() -> list:
     return actions
 
 
+def build_debug_workout4_actions() -> list:
+    """Debug v4: Repeat-Loop, gettext auf einzelnes Repeat Item.
+    Ziel: prüfen ob ein einzelnes Item 'Duration HH:MM:SS' im Text enthält."""
+    actions = []
+
+    uuid_workouts  = make_uuid()
+    uuid_repeat    = make_uuid()
+    uuid_item_text = make_uuid()
+    uuid_combined  = make_uuid()
+    uuid_encoded   = make_uuid()
+    uuid_url       = make_uuid()
+
+    # 1. Toolbox: 3 Workouts
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '3',
+            'useDateRange': False,
+        },
+    })
+
+    # 2. Repeat mit jedem Workout
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.repeat.each',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_repeat,
+            'WFInput': {
+                'Type': 'Variable',
+                'Variable': param_ref(uuid_workouts, 'Workouts'),
+            },
+            'WFControlFlowMode': 0,
+        },
+    })
+
+    # 3. gettext auf einzelnes Repeat Item — OutputName-Kandidat v3 (Englisch)
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_item_text,
+            'WFTextActionText': text_with_vars([(uuid_repeat, 'Repeat Item')]),
+        },
+    })
+
+    # 4. An Named Variable anhängen
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.appendvariable',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_item_text, OUT_TEXT),
+            'WFVariableName': 'WLines',
+        },
+    })
+
+    # 5. Ende Repeat
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.repeat.each',
+        'WFWorkflowActionParameters': {
+            'GroupingIdentifier': uuid_repeat,
+            'WFControlFlowMode': 2,
+        },
+    })
+
+    # 6. Named Variable als Text zusammenführen
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_combined,
+            'WFTextActionText': {
+                'Value': {
+                    'string': '\ufffc',
+                    'attachmentsByRange': {
+                        '{0, 1}': {
+                            'Type': 'Variable',
+                            'VariableName': 'WLines',
+                        },
+                    },
+                },
+                'WFSerializationType': 'WFTextTokenString',
+            },
+        },
+    })
+
+    # 7. URL-Encode + senden
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_combined, OUT_TEXT),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?workout_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
+
+    return actions
+
+
+def build_debug_workout5_actions() -> list:
+    """Debug v5: Property-Aggrandizement auf dem Workouts-Output.
+    Probiert mehrere Property-Namen um Duration/Distance zu extrahieren."""
+    actions = []
+
+    uuid_workouts = make_uuid()
+    uuid_combined = make_uuid()
+    uuid_encoded  = make_uuid()
+    uuid_url      = make_uuid()
+
+    # 1. Toolbox: 1 Workout (reicht zum Testen)
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '1',
+            'useDateRange': False,
+        },
+    })
+
+    # 2. Alle Property-Kandidaten in einem Text zusammenbauen
+    # Format: "=PropName=\n<Wert>"
+    def prop_text_token(prop_name):
+        return {
+            'Value': {
+                'string': f'={prop_name}=\n\ufffc\n',
+                'attachmentsByRange': {
+                    '{' + str(len(f'={prop_name}=\n')) + ', 1}':
+                        property_aggrandizement_ref(uuid_workouts, 'Workouts', prop_name),
+                },
+            },
+            'WFSerializationType': 'WFTextTokenString',
+        }
+
+    PROP_CANDIDATES = [
+        'Duration', 'durationSeconds', 'duration',
+        'Distance', 'distance', 'distanceMeters',
+        'Calories', 'calories', 'totalEnergyBurned',
+        'Start Date', 'startDate', 'End Date', 'endDate',
+        'Workout Type', 'workoutActivityType', 'activityType',
+    ]
+
+    # Baue kombinierten Text aus allen Kandidaten
+    combined_string = '=BASELINE=\n\ufffc\n'
+    combined_attachments = {
+        '{' + str(len('=BASELINE=\n')) + ', 1}':
+            action_output_ref(uuid_workouts, 'Workouts'),
+    }
+    offset = len(combined_string)
+
+    for prop in PROP_CANDIDATES:
+        label = f'={prop}=\n'
+        combined_attachments['{' + str(offset + len(label)) + ', 1}'] = \
+            property_aggrandizement_ref(uuid_workouts, 'Workouts', prop)
+        combined_string += label + '\ufffc\n'
+        offset += len(label) + 2  # \ufffc + \n
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_combined,
+            'WFTextActionText': {
+                'Value': {
+                    'string': combined_string,
+                    'attachmentsByRange': combined_attachments,
+                },
+                'WFSerializationType': 'WFTextTokenString',
+            },
+        },
+    })
+
+    # URL-Encode + senden
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_combined, OUT_TEXT),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?workout_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
+
+    return actions
+
+
+def build_debug_workout6_actions() -> list:
+    """Debug v6: Echte Labels aus dem iOS Property-Selector (Screenshot).
+    Testet zwei Mechanismen pro Property:
+    A) OutputName direkt auf GetWorkoutsIntent
+    B) WFPropertyVariableAggrandizement mit DE-Label"""
+    actions = []
+    uuid_workouts = make_uuid()
+    uuid_combined = make_uuid()
+    uuid_encoded  = make_uuid()
+    uuid_url      = make_uuid()
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '1',
+            'useDateRange': False,
+        },
+    })
+
+    PROP_LABELS = [
+        'Dauer', 'Total Distance', 'Total Energy Burned',
+        'Start Time', 'End Time', 'Workout Activity Type',
+        'Name', 'ID',
+    ]
+
+    combined_string = ''
+    combined_attachments = {}
+    offset = 0
+
+    for prop in PROP_LABELS:
+        # Ansatz A: OutputName direkt
+        labelA = f'=A:{prop}=\n'
+        combined_string += labelA + '\ufffc\n'
+        combined_attachments['{' + str(offset + len(labelA)) + ', 1}'] = \
+            action_output_ref(uuid_workouts, prop)
+        offset += len(labelA) + 2
+
+        # Ansatz B: WFPropertyVariableAggrandizement
+        labelB = f'=B:{prop}=\n'
+        combined_string += labelB + '\ufffc\n'
+        combined_attachments['{' + str(offset + len(labelB)) + ', 1}'] = \
+            property_aggrandizement_ref(uuid_workouts, 'Workouts', prop)
+        offset += len(labelB) + 2
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_combined,
+            'WFTextActionText': {
+                'Value': {
+                    'string': combined_string,
+                    'attachmentsByRange': combined_attachments,
+                },
+                'WFSerializationType': 'WFTextTokenString',
+            },
+        },
+    })
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_combined, OUT_TEXT),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?workout_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
+
+    return actions
+
+
+def build_debug_workout7_actions() -> list:
+    """Debug v7: Korrekte Aggrandizement-Struktur (PropertyName statt WFPropertyName).
+    Testet mehrere camelCase-Kandidaten für Distance, Energy, Activity etc."""
+    actions = []
+    uuid_workouts = make_uuid()
+    uuid_combined = make_uuid()
+    uuid_encoded  = make_uuid()
+    uuid_url      = make_uuid()
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'com.alexhay.ToolboxProForShortcuts.GetWorkoutsIntent',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_workouts,
+            'workoutType': 'All',
+            'limit': '1',
+            'useDateRange': False,
+        },
+    })
+
+    # Internal camelCase Property-Namen-Kandidaten (basierend auf Ground Truth "duration")
+    PROPS = [
+        'duration',             # bestätigt
+        'totalDistance', 'distance',
+        'totalEnergyBurned', 'calories', 'energy',
+        'startTime', 'startDate',
+        'endTime', 'endDate',
+        'workoutActivityType', 'activityType',
+        'name', 'id', 'workout',
+    ]
+
+    combined_string = ''
+    combined_attachments = {}
+    offset = 0
+
+    for prop in PROPS:
+        label = f'={prop}=\n'
+        combined_string += label + '\ufffc\n'
+        combined_attachments['{' + str(offset + len(label)) + ', 1}'] = \
+            property_aggrandizement_ref(uuid_workouts, 'Workouts', prop)
+        offset += len(label) + 2
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_combined,
+            'WFTextActionText': {
+                'Value': {
+                    'string': combined_string,
+                    'attachmentsByRange': combined_attachments,
+                },
+                'WFSerializationType': 'WFTextTokenString',
+            },
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_combined, OUT_TEXT),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?workout_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
+    return actions
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Apple Health Sync iOS Shortcut Generator'
@@ -753,7 +1159,7 @@ def main():
     )
     parser.add_argument(
         '--mode', default='standard',
-        choices=['standard', 'debug-workouts', 'debug-workouts2', 'debug-workouts3'],
+        choices=['standard', 'debug-workouts', 'debug-workouts2', 'debug-workouts3', 'debug-workouts4', 'debug-workouts5', 'debug-workouts6', 'debug-workouts7'],
         help='Shortcut-Modus'
     )
     args = parser.parse_args()
@@ -764,6 +1170,14 @@ def main():
         actions = build_debug_workout2_actions()
     elif args.mode == 'debug-workouts3':
         actions = build_debug_workout3_actions()
+    elif args.mode == 'debug-workouts4':
+        actions = build_debug_workout4_actions()
+    elif args.mode == 'debug-workouts5':
+        actions = build_debug_workout5_actions()
+    elif args.mode == 'debug-workouts6':
+        actions = build_debug_workout6_actions()
+    elif args.mode == 'debug-workouts7':
+        actions = build_debug_workout7_actions()
     else:
         actions = build_actions(args.days, args.cooldown)
 

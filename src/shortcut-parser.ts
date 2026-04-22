@@ -1,10 +1,6 @@
 import type { HealthData, TrainingEntry } from "./providers/provider";
 import { normalizeAppleWorkoutType, getActivityCategory } from "./activity-keys";
 
-function round1(value: number): number {
-	return Math.round(value * 10) / 10;
-}
-
 type VDPair = { v: string | number; d: string };
 
 function isVDPair(value: unknown): value is VDPair {
@@ -118,19 +114,24 @@ function parseStrList(raw: unknown): string[] {
 		.map(normalizeDate);
 }
 
-/**
- * Parst den Toolbox-Workout-Rohtext ("Hiking 2026-04-21 at 16:01\n...").
- * Gibt die einzigartigen Workout-Typ-Strings für targetDate zurück (in Reihenfolge).
- */
-function parseWorkoutsRawToTypes(raw: unknown, targetDate: string): string[] {
-	if (typeof raw !== "string" || !raw.trim()) return [];
-	const seen = new Set<string>();
-	for (const line of raw.split(/\n|\\n/)) {
-		const m = line.trim().match(/^(.+?) (\d{4}-\d{2}-\d{2}) at \d{2}:\d{2}/);
-		if (m && m[2] === targetDate) seen.add(m[1]!.trim());
-	}
-	return Array.from(seen);
+/** iOS serialisiert Zahlen mit DE-Locale ("63,2") — `,` zu `.` vor parseFloat. */
+function parseLocaleNum(s: string): number {
+	return parseFloat(s.trim().replace(",", "."));
 }
+
+/** Eine Zeile pro Workout (parallele Listen via Toolbox Property-Aggrandizement). */
+function splitWorkoutList(raw: unknown): string[] {
+	if (typeof raw !== "string") return [];
+	return raw.split(/\n|\\n/).map((s) => s.trim());
+}
+
+type ParsedWorkoutSource = {
+	type?: unknown;
+	duration?: unknown;
+	distance?: unknown;
+	calories?: unknown;
+	startTime?: unknown;
+};
 
 
 /**
@@ -190,7 +191,7 @@ export function extractPayloadDates(
  * returns a map of date → HealthData.
  */
 export function parseShortcutPayloadMultiDay(
-	payload: { metrics?: Record<string, unknown>; workouts?: unknown[]; workouts_raw?: unknown },
+	payload: { metrics?: Record<string, unknown>; workouts?: unknown },
 	version: string
 ): Record<string, HealthData> {
 	const out: Record<string, HealthData> = {};
@@ -208,7 +209,7 @@ export function parseShortcutPayloadMultiDay(
  *        picks the entry matching targetDate
  */
 export function parseShortcutPayload(
-	payload: { metrics?: Record<string, unknown>; workouts?: unknown[]; workouts_raw?: unknown },
+	payload: { metrics?: Record<string, unknown>; workouts?: unknown },
 	_version: string,
 	targetDate: string
 ): HealthData {
@@ -243,53 +244,41 @@ export function parseShortcutPayload(
 		}
 	}
 
-	// Workouts aus Toolbox-Rohtext → activities + trainings (wie Garmin-Plugin)
-	// Temporär bis eigene App; single-workout-Tag bekommt duration+distance, multi-Tag nur Typ.
-	if (payload.workouts_raw) {
-		const rawTypes = parseWorkoutsRawToTypes(payload.workouts_raw, targetDate);
-		if (rawTypes.length > 0) {
-			const isSingle = rawTypes.length === 1;
-			const durationMin = isSingle && typeof metrics["intensity_min"] === "number"
-				? Math.round(metrics["intensity_min"] as number) : null;
+	// Workouts — parallele Property-Listen von Toolbox GetWorkoutsIntent.
+	// Pro Workout: type, duration (min), startTime. Distance/Calories aktuell
+	// nicht in activities geschrieben (kommt mit eigener App strukturiert rein).
+	if (payload.workouts) {
+		const w = payload.workouts as ParsedWorkoutSource;
+		const types = splitWorkoutList(w.type);
+		const durations = splitWorkoutList(w.duration);
+		const starts = splitWorkoutList(w.startTime);
+		const n = Math.min(types.length, durations.length, starts.length);
 
-			for (const rawType of rawTypes) {
-				const normalizedType = normalizeAppleWorkoutType(rawType);
-				const category = getActivityCategory(normalizedType);
-				activities[normalizedType] = durationMin ? `${durationMin}min` : "";
-				const entry: TrainingEntry = { type: normalizedType, category };
-				if (durationMin) entry.duration_min = durationMin;
-				trainings.push(entry);
-			}
+		const dayTypeToDuration = new Map<string, number>();
+		for (let i = 0; i < n; i++) {
+			const t = types[i]!;
+			const startDate = normalizeDate(starts[i]!);
+			if (!t || startDate !== targetDate) continue;
+			const durMin = parseLocaleNum(durations[i]!);
+			if (!Number.isFinite(durMin)) continue;
+			const normalizedType = normalizeAppleWorkoutType(t);
+			// Mehrere Workouts gleichen Typs am selben Tag → Dauern aufsummieren
+			dayTypeToDuration.set(
+				normalizedType,
+				(dayTypeToDuration.get(normalizedType) ?? 0) + durMin
+			);
 		}
-	}
 
-	if (Array.isArray(payload.workouts)) {
-		for (const raw of payload.workouts) {
-			const w = raw as Record<string, unknown>;
-			const rawType = typeof w.type === "string" ? w.type : "workout";
-			const normalizedType = normalizeAppleWorkoutType(rawType);
+		for (const [normalizedType, durMin] of dayTypeToDuration) {
+			const rounded = Math.round(durMin);
 			const category = getActivityCategory(normalizedType);
-
-			const parts: string[] = [];
-			if (w.distance_km) parts.push(`${round1(Number(w.distance_km))} km`);
-			if (w.duration_min) parts.push(`${Math.round(Number(w.duration_min))}min`);
-			if (w.calories) parts.push(`${Math.round(Number(w.calories))} kcal`);
-
-			if (parts.length > 0) {
-				if (activities[normalizedType]) {
-					activities[normalizedType] += ` + ${parts.join(" \u00b7 ")}`;
-				} else {
-					activities[normalizedType] = parts.join(" \u00b7 ");
-				}
-			}
-
+			activities[normalizedType] = rounded > 0 ? `${rounded}min` : "";
 			const entry: TrainingEntry = { type: normalizedType, category };
-			if (w.distance_km) entry.distance_km = round1(Number(w.distance_km));
-			if (w.duration_min) entry.duration_min = Math.round(Number(w.duration_min));
-			if (w.calories) entry.calories = Math.round(Number(w.calories));
+			if (rounded > 0) entry.duration_min = rounded;
 			trainings.push(entry);
 		}
 	}
+
 
 	return { metrics, activities, trainings };
 }
