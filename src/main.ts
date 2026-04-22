@@ -42,6 +42,13 @@ export default class AppleHealthSyncPlugin extends Plugin {
 			return;
 		}
 
+		// Debug-Modus: raw Sleep-Daten
+		if (params.sleep_debug !== undefined) {
+			await this.writeNamedDebugFile("sleep-debug-raw.md", this.formatRawDebug("Sleep", params.sleep_debug));
+			new Notice("Apple Health Sync: Sleep-Debug gespeichert → _apple-health-sync/sleep-debug-raw.md");
+			return;
+		}
+
 		const { data, v } = params;
 		let { date } = params;
 
@@ -142,30 +149,39 @@ export default class AppleHealthSyncPlugin extends Plugin {
 		}
 	}
 
-	/** Schreibt den rohen Toolbox-Output in workout-debug-raw.md für manuelle Analyse. */
-	private async writeWorkoutDebugFile(raw: string): Promise<void> {
-		const lines = [
-			`# Workout Debug — Raw Output`,
+	/** Formatiert rohen Debug-Text (generisch für Workout/Sleep). */
+	private formatRawDebug(label: string, raw: string): string {
+		return [
+			`# ${label} Debug — Raw Output`,
 			`**Empfangen:** ${new Date().toLocaleString()}`,
 			`**Länge:** ${raw.length} Zeichen`,
 			``,
-			`## Rohtext (iOS String-Darstellung der Workout-Objekte)`,
+			`## Rohtext`,
 			``,
 			"```",
 			raw,
 			"```",
-		];
+		].join("\n");
+	}
+
+	/** Schreibt Debug-Inhalt in eine benannte Datei unter _apple-health-sync/. */
+	private async writeNamedDebugFile(filename: string, content: string): Promise<void> {
 		const folder = "_apple-health-sync";
-		const path = `${folder}/workout-debug-raw.md`;
+		const path = `${folder}/${filename}`;
 		if (!this.app.vault.getAbstractFileByPath(folder)) {
 			await this.app.vault.createFolder(folder);
 		}
 		const existing = this.app.vault.getAbstractFileByPath(path);
 		if (existing instanceof TFile) {
-			await this.app.vault.modify(existing, lines.join("\n"));
+			await this.app.vault.modify(existing, content);
 		} else {
-			await this.app.vault.create(path, lines.join("\n"));
+			await this.app.vault.create(path, content);
 		}
+	}
+
+	/** Schreibt den rohen Toolbox-Output in workout-debug-raw.md für manuelle Analyse. */
+	private async writeWorkoutDebugFile(raw: string): Promise<void> {
+		await this.writeNamedDebugFile("workout-debug-raw.md", this.formatRawDebug("Workout", raw));
 	}
 
 	/** Writes a short debug note when sync is skipped due to cooldown. */

@@ -448,6 +448,132 @@ def build_actions(days: int, cooldown: int) -> list:
     return actions
 
 
+def build_debug_sleep1_actions() -> list:
+    """Debug Sleep v1: Testet beide Property-Extraction-Mechanismen auf
+    HealthKit-Sleep-Samples. Ziel: herausfinden welche Property-Namen die Start-
+    Zeit, End-Zeit und den Sleep-Stage (Deep/Core/REM/Awake) liefern."""
+    actions = []
+
+    uuid_sleep    = make_uuid()
+    uuid_combined = make_uuid()
+    uuid_encoded  = make_uuid()
+    uuid_url      = make_uuid()
+
+    # 1. Filter Sleep (letzte 3 Tage, keine Group-by-Day — einzelne Segmente)
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.filter.health.quantity',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_sleep,
+            'WFContentItemFilter': {
+                'Value': {
+                    'WFActionParameterFilterPrefix': 1,
+                    'WFContentPredicateBoundedDate': False,
+                    'WFActionParameterFilterTemplates': [
+                        {
+                            'Bounded': True, 'Operator': 4, 'Removable': False,
+                            'Property': 'Type',
+                            'Values': {'Enumeration': {'Value': 'Sleep',
+                                                       'WFSerializationType': 'WFStringSubstitutableState'}},
+                        },
+                        {
+                            'Bounded': True, 'Operator': 1001, 'Removable': False,
+                            'Property': 'Start Date',
+                            'Values': {'Unit': 16, 'Number': '3'},
+                        },
+                    ],
+                },
+                'WFSerializationType': 'WFContentPredicateTableTemplate',
+            },
+        },
+    })
+
+    # Kandidaten — Ansatz A: properties.health.quantity mit WFContentItemPropertyName
+    # OutputName ist DE-lokalisiert (wie 'Startdatum' für Start Date bei Metriken)
+    PROP_A = [
+        # (WFContentItemPropertyName, OutputName-DE-Guess)
+        ('Start Date',  'Startdatum'),
+        ('End Date',    'Enddatum'),
+        ('Duration',    'Dauer'),
+        ('Value',       'Wert'),
+        ('Type',        'Typ'),
+    ]
+    uuids_a = {name: make_uuid() for name, _ in PROP_A}
+    for prop_name, _out in PROP_A:
+        actions.append({
+            'WFWorkflowActionIdentifier': 'is.workflow.actions.properties.health.quantity',
+            'WFWorkflowActionParameters': {
+                'UUID': uuids_a[prop_name],
+                'WFContentItemPropertyName': prop_name,
+                'WFInput': param_ref(uuid_sleep, OUT_HEALTH),
+            },
+        })
+
+    # Ansatz B: Property-Aggrandizement (camelCase, wie bei Toolbox-Workouts)
+    PROP_B = ['startDate', 'endDate', 'duration', 'value', 'category', 'sampleType']
+
+    # Gesamt-Text zusammenbauen
+    combined_string = ''
+    combined_attachments = {}
+    offset = 0
+
+    # Ansatz A
+    for prop_name, out_name in PROP_A:
+        label = f'=A:{prop_name}=\n'
+        combined_string += label + '\ufffc\n'
+        combined_attachments['{' + str(offset + len(label)) + ', 1}'] = \
+            action_output_ref(uuids_a[prop_name], out_name)
+        offset += len(label) + 2
+
+    # Ansatz B
+    for prop in PROP_B:
+        label = f'=B:{prop}=\n'
+        combined_string += label + '\ufffc\n'
+        combined_attachments['{' + str(offset + len(label)) + ', 1}'] = \
+            property_aggrandizement_ref(uuid_sleep, OUT_HEALTH, prop)
+        offset += len(label) + 2
+
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_combined,
+            'WFTextActionText': {
+                'Value': {
+                    'string': combined_string,
+                    'attachmentsByRange': combined_attachments,
+                },
+                'WFSerializationType': 'WFTextTokenString',
+            },
+        },
+    })
+
+    # URL-Encode + senden (als sleep_debug)
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.urlencode',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_encoded,
+            'WFInput': param_ref_as_text(uuid_combined, OUT_TEXT),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+        'WFWorkflowActionParameters': {
+            'UUID': uuid_url,
+            'WFTextActionText': text_with_vars([
+                'obsidian://apple-health-sync?sleep_debug=',
+                (uuid_encoded, OUT_URLENCODED),
+            ]),
+        },
+    })
+    actions.append({
+        'WFWorkflowActionIdentifier': 'is.workflow.actions.openurl',
+        'WFWorkflowActionParameters': {
+            'WFInput': param_ref(uuid_url, OUT_TEXT),
+            'UUID': make_uuid(),
+        },
+    })
+    return actions
+
+
 def build_debug_workout_actions() -> list:
     """Minimalster Debug-Shortcut: Toolbox GetWorkoutsIntent → raw Text → Obsidian.
     Ziel: herausfinden welche Felder/Format das Toolbox-Workout-Objekt hat."""
@@ -1159,7 +1285,7 @@ def main():
     )
     parser.add_argument(
         '--mode', default='standard',
-        choices=['standard', 'debug-workouts', 'debug-workouts2', 'debug-workouts3', 'debug-workouts4', 'debug-workouts5', 'debug-workouts6', 'debug-workouts7'],
+        choices=['standard', 'debug-workouts', 'debug-workouts2', 'debug-workouts3', 'debug-workouts4', 'debug-workouts5', 'debug-workouts6', 'debug-workouts7', 'debug-sleep1'],
         help='Shortcut-Modus'
     )
     args = parser.parse_args()
@@ -1178,6 +1304,8 @@ def main():
         actions = build_debug_workout6_actions()
     elif args.mode == 'debug-workouts7':
         actions = build_debug_workout7_actions()
+    elif args.mode == 'debug-sleep1':
+        actions = build_debug_sleep1_actions()
     else:
         actions = build_actions(args.days, args.cooldown)
 
