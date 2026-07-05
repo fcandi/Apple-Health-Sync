@@ -1,6 +1,6 @@
 {
 	"name": "apple-health-sync",
-	"version": "0.1.0-beta.2",
+	"version": "0.1.0-beta.3",
 	"description": "Sync Apple Health data into Obsidian Daily Notes via iOS Shortcuts",
 	"main": "main.js",
 	"type": "module",
