@@ -172,6 +172,30 @@ const CATEGORY_MAP: Record<string, string> = {
 };
 
 /**
+ * Activities, bei denen Apple Watch zwar eine totalDistance liefert, diese
+ * aber inhaltlich Quatsch ist (z.B. Strength Training: aus Hand-Bewegung
+ * geschätzte Pseudo-Strecke). Für diese Keys wird die Distanz beim Output
+ * unterdrückt — gleiches Verhalten wie das Garmin-Plugin.
+ *
+ * Indoor-Cycling/Indoor-Rowing/Treadmill bewusst NICHT in dieser Liste:
+ * Watch + gekoppeltes Gerät liefern dort eine echte Strecke.
+ */
+const NO_DISTANCE_ACTIVITIES = new Set([
+	"strength_training",
+	"gym_equipment",
+	"yoga",
+	"pilates",
+	"hiit",
+	"cardio",
+	"boxing",
+	"martial_arts",
+	"jump_rope",
+	"stair_stepper",
+	"meditation",
+	"dancing",
+]);
+
+/**
  * Normalizes an Apple Health workout type string to a canonical key.
  * Unknown types are passed through as lowercase+underscore.
  */
@@ -186,4 +210,9 @@ export function normalizeAppleWorkoutType(rawType: string): string {
  */
 export function getActivityCategory(normalizedKey: string): string {
 	return CATEGORY_MAP[normalizedKey] ?? "other";
+}
+
+/** True wenn für diese Activity die distance-Property nicht ausgegeben werden soll. */
+export function suppressDistance(normalizedKey: string): boolean {
+	return NO_DISTANCE_ACTIVITIES.has(normalizedKey);
 }

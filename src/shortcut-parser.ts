@@ -1,5 +1,5 @@
 import type { HealthData, TrainingEntry } from "./providers/provider";
-import { normalizeAppleWorkoutType, getActivityCategory } from "./activity-keys";
+import { normalizeAppleWorkoutType, getActivityCategory, suppressDistance } from "./activity-keys";
 
 type VDPair = { v: string | number; d: string };
 
@@ -311,19 +311,29 @@ export function parseShortcutPayload(
 		const starts = splitWorkoutList(w.startTime);
 		const n = Math.min(types.length, durations.length, starts.length);
 
+		// Toolbox lässt Workouts ohne totalDistance (z.B. Krafttraining — HealthKit kennt dort
+		// gar keine Distanz-Quantität) beim List-Export komplett aus statt eine Leerzeile zu
+		// senden. Die distances-Liste ist dadurch kürzer als types/durations/starts und nicht
+		// mehr index-gleich. suppressDistance() kennt genau die Typen, die Toolbox überspringt
+		// — nur für die anderen wird ein Element aus distances konsumiert (in Batch-Reihenfolge,
+		// über alle geladenen Workouts hinweg, nicht nur die des targetDate).
 		const grouped = new Map<string, WorkoutGroup>();
+		let distIdx = 0;
 		for (let i = 0; i < n; i++) {
 			const t = types[i]!;
+			if (!t) continue;
+
+			const normalizedType = normalizeAppleWorkoutType(t);
+			const distKm = suppressDistance(normalizedType) ? 0 : parseLocaleNum(distances[distIdx++], 0);
+
 			const startDate = normalizeDate(starts[i]!);
-			if (!t || startDate !== targetDate) continue;
+			if (startDate !== targetDate) continue;
 
 			const durMin = parseLocaleNum(durations[i]);
 			if (!Number.isFinite(durMin) || durMin <= 0) continue;
 
-			const distKm = parseLocaleNum(distances[i], 0);
 			const cal = parseLocaleNum(cals[i], 0);
 
-			const normalizedType = normalizeAppleWorkoutType(t);
 			const g = grouped.get(normalizedType)
 				?? { count: 0, distanceKm: 0, durationMin: 0, calories: 0 };
 			g.count += 1;
@@ -332,11 +342,18 @@ export function parseShortcutPayload(
 			g.calories += cal;
 			grouped.set(normalizedType, g);
 		}
+		if (distIdx !== distances.length) {
+			console.warn(
+				"Apple Health Sync: workout distance count mismatch — suppressDistance-Heuristik greift nicht für alle Typen:",
+				distIdx, "erwartet vs", distances.length, "geliefert"
+			);
+		}
 
 		for (const [normalizedType, data] of grouped) {
+			const showDistance = !suppressDistance(normalizedType) && data.distanceKm > 0;
 			const parts: string[] = [];
 			if (data.count > 1) parts.push(`${data.count}x`);
-			if (data.distanceKm > 0) parts.push(`${Math.round(data.distanceKm * 10) / 10} km`);
+			if (showDistance) parts.push(`${Math.round(data.distanceKm * 10) / 10} km`);
 			if (data.durationMin > 0) parts.push(`${Math.round(data.durationMin)}min`);
 			if (data.calories > 0) parts.push(`${Math.round(data.calories)} kcal`);
 
@@ -344,7 +361,7 @@ export function parseShortcutPayload(
 
 			const category = getActivityCategory(normalizedType);
 			const entry: TrainingEntry = { type: normalizedType, category };
-			if (data.distanceKm > 0) entry.distance_km = Math.round(data.distanceKm * 10) / 10;
+			if (showDistance) entry.distance_km = Math.round(data.distanceKm * 10) / 10;
 			if (data.durationMin > 0) entry.duration_min = Math.round(data.durationMin);
 			if (data.calories > 0) entry.calories = Math.round(data.calories);
 			trainings.push(entry);
